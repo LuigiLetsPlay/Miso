@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (QAbstractButton, QDialog, QFrame, QGraphicsDropSh
 
 from . import media, theme
 from .store import CACHE_DIR
+from .i18n import tr
 
 
 def human_count(n: int) -> str:
@@ -28,13 +29,13 @@ def human_ago(ts: float) -> str:
     import time
     s = max(0, time.time() - ts)
     if s < 120:
-        return "gerade eben"
+        return tr("gerade eben")
     if s < 3600:
-        return f"vor {int(s // 60)} Min."
+        return tr("vor {a0} Min.", a0=int(s // 60))
     if s < 86400:
-        return f"vor {int(s // 3600)} Std."
+        return tr("vor {a0} Std.", a0=int(s // 3600))
     d = int(s // 86400)
-    return "gestern" if d == 1 else f"vor {d} Tagen"
+    return "gestern" if d == 1 else tr("vor {a0} Tagen", a0=d)
 
 
 def human_size(n: int) -> str:
@@ -617,7 +618,7 @@ class MediaCard(QWidget):
             p.fillPath(rounded(fill, 3), QColor(theme.ACCENT))
             p.setPen(QColor("white"))
             p.setFont(theme.ui_font(8.5, theme.QFont.Weight.DemiBold))
-            label = self.status or "Wird heruntergeladen"
+            label = self.status or tr("Wird heruntergeladen")
             label = f"{int(self.progress * 100)} %  ·  {label}" if self.progress > 0 else label
             fm = p.fontMetrics()
             p.drawText(QRectF(14, bar.top() - 24, w - 28, 20), Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter,
@@ -695,8 +696,8 @@ class CardGrid(QWidget):
 class ConfirmDialog(QDialog):
     """Dark, frameless yes/no popup. Used before anything gets deleted."""
 
-    def __init__(self, parent: QWidget, title: str, text: str, confirm: str = "Löschen",
-                 cancel: str = "Abbrechen", danger: bool = True, field: str | None = None) -> None:
+    def __init__(self, parent: QWidget, title: str, text: str, confirm: str = tr("Löschen"),
+                 cancel: str = tr("Abbrechen"), danger: bool = True, field: str | None = None) -> None:
         super().__init__(parent)
         # stays on top so it can't hide behind always-on-top overlays
         self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint
@@ -775,12 +776,12 @@ class ConfirmDialog(QDialog):
         fade_in_window(self)
 
     @staticmethod
-    def ask(parent: QWidget, title: str, text: str, confirm: str = "Löschen", cancel: str = "Abbrechen",
+    def ask(parent: QWidget, title: str, text: str, confirm: str = tr("Löschen"), cancel: str = tr("Abbrechen"),
             danger: bool = True) -> bool:
         return ConfirmDialog(parent, title, text, confirm, cancel, danger).exec() == QDialog.DialogCode.Accepted
 
     @staticmethod
-    def ask_text(parent: QWidget, title: str, value: str = "", confirm: str = "Speichern", text: str = "") -> str | None:
+    def ask_text(parent: QWidget, title: str, value: str = "", confirm: str = tr("Speichern"), text: str = "") -> str | None:
         dlg = ConfirmDialog(parent, title, text, confirm, danger=False, field=value)
         if dlg.exec() == QDialog.DialogCode.Accepted and dlg.edit.text().strip():
             return dlg.edit.text().strip()
@@ -818,12 +819,12 @@ class ProgressDialog(QDialog):
         self.bar.setStyleSheet(f"QProgressBar {{ background:{theme.SURFACE_3}; border:none; border-radius:3px; }}"
                                f"QProgressBar::chunk {{ background:{theme.ACCENT}; border-radius:3px; }}")
         lay.addWidget(self.bar)
-        self.status = QLabel("Wird vorbereitet …")
+        self.status = QLabel(tr("Wird vorbereitet …"))
         self.status.setStyleSheet(f"color:{theme.MUTED}; background:transparent;")
         lay.addWidget(self.status)
         row = QHBoxLayout()
         row.addStretch()
-        self.cancel_btn = QPushButton("Abbrechen")
+        self.cancel_btn = QPushButton(tr("Abbrechen"))
         self.cancel_btn.clicked.connect(self.cancelled.emit)
         row.addWidget(self.cancel_btn)
         lay.addLayout(row)
@@ -832,7 +833,7 @@ class ProgressDialog(QDialog):
     def set_progress(self, done: int, total: int) -> None:
         if total:
             self.bar.setValue(int(done * 1000 / total))
-            self.status.setText(f"{human_size(done)} von {human_size(total)}")
+            self.status.setText(tr("{a0} von {a1}", a0=human_size(done), a1=human_size(total)))
         else:
             self.status.setText(human_size(done))
 

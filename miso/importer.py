@@ -21,6 +21,7 @@ from PySide6.QtGui import QImage
 
 from . import media
 from .store import UPLOAD_DIR
+from .i18n import tr
 
 MAX_BYTES = 200 * 1024 * 1024
 FORMAT_EXT = {"GIF": ".gif", "PNG": ".png", "WEBP": ".webp", "JPEG": ".jpg", "BMP": ".bmp"}
@@ -62,11 +63,11 @@ def _finish(tmp: Path, title: str) -> tuple[str, str]:
             fmt = im.format
     except Exception:
         tmp.unlink(missing_ok=True)
-        raise ValueError("Das ist kein unterstütztes Bild")
+        raise ValueError(tr("Das ist kein unterstütztes Bild"))
     ext = FORMAT_EXT.get(fmt or "")
     if not ext:
         tmp.unlink(missing_ok=True)
-        raise ValueError(f"Format {fmt} wird nicht unterstützt")
+        raise ValueError(tr("Format {a0} wird nicht unterstützt", a0=fmt))
     final = tmp.with_name(Path(tmp.name).stem + ext) if tmp.suffix.lower() != ext else tmp
     if final != tmp:
         tmp.replace(final)
@@ -76,7 +77,7 @@ def _finish(tmp: Path, title: str) -> tuple[str, str]:
 def copy_file(path: str) -> tuple[str, str]:
     src = Path(path)
     if not media.is_supported(path) or not src.is_file():
-        raise ValueError(f"„{src.name}“ wird nicht unterstützt")
+        raise ValueError(tr("„{a0}“ wird nicht unterstützt", a0=src.name))
     dest = _unique(src.name)
     shutil.copy2(src, dest)
     return str(dest), src.stem
@@ -85,8 +86,8 @@ def copy_file(path: str) -> tuple[str, str]:
 def save_image(img: QImage) -> tuple[str, str]:
     dest = _unique("eingefuegt.png")
     if not img.save(str(dest), "PNG"):
-        raise ValueError("Bild aus der Zwischenablage konnte nicht gespeichert werden")
-    return str(dest), "Eingefügtes Bild"
+        raise ValueError(tr("Bild aus der Zwischenablage konnte nicht gespeichert werden"))
+    return str(dest), tr("Eingefügtes Bild")
 
 
 def download(url: str) -> tuple[str, str]:
@@ -95,7 +96,7 @@ def download(url: str) -> tuple[str, str]:
         data = base64.b64decode(payload) if ";base64" in header else urllib.parse.unquote_to_bytes(payload)
         tmp = _unique("eingefuegt.bin")
         tmp.write_bytes(data)
-        return _finish(tmp, "Eingefügtes Bild")
+        return _finish(tmp, tr("Eingefügtes Bild"))
 
     req = urllib.request.Request(url, headers={
         "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/130 Safari/537.36",
@@ -109,12 +110,12 @@ def download(url: str) -> tuple[str, str]:
             while chunk := r.read(1 << 16):
                 total += len(chunk)
                 if total > MAX_BYTES:
-                    raise ValueError("Datei ist größer als 200 MB")
+                    raise ValueError(tr("Datei ist größer als 200 MB"))
                 f.write(chunk)
     except Exception:
         tmp.unlink(missing_ok=True)
         raise
-    title = Path(name).stem if name != "bild" else "Bild aus dem Web"
+    title = Path(name).stem if name != "bild" else tr("Bild aus dem Web")
     return _finish(tmp, title[:60])
 
 

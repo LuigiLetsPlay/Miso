@@ -7,17 +7,18 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 
 from . import winapi
+from .i18n import tr
 
 # action -> (id for RegisterHotKey, label, default combo)
 ACTIONS = {
-    "edit": (1, "Bearbeiten-Modus", "Ctrl+Alt+E"),
-    "hide": (2, "Alle aus-/einblenden", "Ctrl+Alt+H"),
-    "prev": (3, "Vorheriges Profil", "Ctrl+Alt+Left"),
-    "next": (4, "Nächstes Profil", "Ctrl+Alt+Right"),
+    "edit": (1, tr("Bearbeiten-Modus"), "Ctrl+Alt+E"),
+    "hide": (2, tr("Alle aus-/einblenden"), "Ctrl+Alt+H"),
+    "prev": (3, tr("Vorheriges Profil"), "Ctrl+Alt+Left"),
+    "next": (4, tr("Nächstes Profil"), "Ctrl+Alt+Right"),
 }
 
 MODS = {"Ctrl": winapi.MOD_CONTROL, "Alt": winapi.MOD_ALT, "Shift": winapi.MOD_SHIFT, "Win": 0x0008}
-MOD_TEXT = {"Ctrl": "Strg", "Alt": "Alt", "Shift": "Umschalt", "Win": "Win"}
+MOD_TEXT = {"Ctrl": tr("Strg"), "Alt": "Alt", "Shift": tr("Umschalt"), "Win": "Win"}
 
 # named keys: storage name -> (virtual key, display text, Qt key)
 SPECIAL = {
@@ -25,13 +26,13 @@ SPECIAL = {
     "Up": (0x26, "↑", Qt.Key.Key_Up),
     "Right": (0x27, "→", Qt.Key.Key_Right),
     "Down": (0x28, "↓", Qt.Key.Key_Down),
-    "Space": (0x20, "Leertaste", Qt.Key.Key_Space),
-    "Home": (0x24, "Pos1", Qt.Key.Key_Home),
-    "End": (0x23, "Ende", Qt.Key.Key_End),
-    "PageUp": (0x21, "Bild ↑", Qt.Key.Key_PageUp),
-    "PageDown": (0x22, "Bild ↓", Qt.Key.Key_PageDown),
-    "Insert": (0x2D, "Einfg", Qt.Key.Key_Insert),
-    "Delete": (0x2E, "Entf", Qt.Key.Key_Delete),
+    "Space": (0x20, tr("Leertaste"), Qt.Key.Key_Space),
+    "Home": (0x24, tr("Pos1"), Qt.Key.Key_Home),
+    "End": (0x23, tr("Ende"), Qt.Key.Key_End),
+    "PageUp": (0x21, tr("Bild ↑"), Qt.Key.Key_PageUp),
+    "PageDown": (0x22, tr("Bild ↓"), Qt.Key.Key_PageDown),
+    "Insert": (0x2D, tr("Einfg"), Qt.Key.Key_Insert),
+    "Delete": (0x2E, tr("Entf"), Qt.Key.Key_Delete),
 }
 for _n in range(1, 25):
     SPECIAL[f"F{_n}"] = (0x6F + _n, f"F{_n}", getattr(Qt.Key, f"Key_F{_n}"))

@@ -11,6 +11,7 @@ from PySide6.QtWidgets import QMenu, QWidget
 
 from . import media, theme, winapi
 from .store import OverlayState
+from .i18n import tr
 
 HANDLE = 16          # px grab zone for the corner handles
 SNAP = 14            # px screen-edge snapping distance
@@ -55,7 +56,7 @@ class OverlayWindow(QWidget):
         self._after_fade = None
         self._fade.finished.connect(self._fade_done)
 
-        self.setGeometry(state.x, state.y, max(MIN_SIDE, state.w), max(MIN_SIDE, state.h))
+        self.place_on_screen()
         self._maybe_decode()
 
     # -- decoding -----------------------------------------------------------
@@ -106,6 +107,7 @@ class OverlayWindow(QWidget):
         h = round(self.width() * n.height() / n.width())
         if abs(h - self.height()) > 1:
             self.resize(self.width(), h)
+            self._commit()
 
     def aspect(self) -> float:
         if self.frames and self.frames.native.height():
@@ -221,11 +223,11 @@ class OverlayWindow(QWidget):
         elif self.error:
             p.setPen(QColor(theme.DANGER))
             p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter | Qt.TextFlag.TextWordWrap,
-                       f"Kann nicht geladen werden\n{self.error[:80]}")
+                       tr("Kann nicht geladen werden\n{a0}", a0=self.error[:80]))
         else:
             p.setPen(QColor(255, 255, 255, 140))
             p.setFont(theme.ui_font(9))
-            p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "Lädt …")
+            p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, tr("Lädt …"))
 
         if self._chrome > 0:
             p.setOpacity(self._chrome)
@@ -394,23 +396,23 @@ class OverlayWindow(QWidget):
         title.setEnabled(False)
         menu.addSeparator()
 
-        opacity = menu.addMenu("Deckkraft")
+        opacity = menu.addMenu(tr("Deckkraft"))
         for v in (1.0, 0.85, 0.7, 0.5, 0.3):
             a = opacity.addAction(("●  " if math.isclose(self.state.opacity, v) else "     ") + f"{int(v * 100)} %")
             a.triggered.connect(lambda _=False, v=v: self._set("opacity", v))
-        speed = menu.addMenu("Geschwindigkeit")
+        speed = menu.addMenu(tr("Geschwindigkeit"))
         for v in (0.5, 0.75, 1.0, 1.5, 2.0):
             a = speed.addAction(("●  " if math.isclose(self.state.speed, v) else "     ") + f"{v:g}×")
             a.triggered.connect(lambda _=False, v=v: self._set("speed", v))
 
-        flip = QAction(("●  " if self.state.flip else "") + "Horizontal spiegeln", menu)
+        flip = QAction(("●  " if self.state.flip else "") + tr("Horizontal spiegeln"), menu)
         flip.triggered.connect(lambda: self._set("flip", not self.state.flip))
         menu.addAction(flip)
-        menu.addAction("Originalgröße", self.original_size)
-        menu.addAction("Bildschirm-Mitte", self.center_on_screen)
+        menu.addAction(tr("Originalgröße"), self.original_size)
+        menu.addAction(tr("Bildschirm-Mitte"), self.center_on_screen)
         menu.addSeparator()
-        menu.addAction("Fertig (Overlay fixieren)", self.edit_toggle_requested.emit)
-        menu.addAction("Entfernen", lambda: self.remove_requested.emit(self))
+        menu.addAction(tr("Fertig (Overlay fixieren)"), self.edit_toggle_requested.emit)
+        menu.addAction(tr("Entfernen"), lambda: self.remove_requested.emit(self))
         menu.exec(event.globalPos())
 
     def _set(self, attr: str, value) -> None:
@@ -439,10 +441,44 @@ class OverlayWindow(QWidget):
         super().resizeEvent(event)
         self._redecode.start()
 
+    # -- screen mapping (resolution changes, e.g. games in exclusive fullscreen) --
+    def _ref_screen(self):
+        s = self.state
+        by_name = next((sc for sc in QGuiApplication.screens() if sc.name() == s.screen), None)
+        if by_name:
+            return by_name
+        centre = QPoint(s.x + s.w // 2, s.y + s.h // 2)
+        return QGuiApplication.screenAt(centre) or QGuiApplication.primaryScreen()
+
+    def place_on_screen(self) -> None:
+        """Window geometry = stored geometry scaled from the reference screen size to the current one."""
+        s = self.state
+        screen = self._ref_screen()
+        g = screen.geometry()
+        if not s.sw or not s.sh:            # older configs: take the screen as it is now
+            s.screen, s.sx, s.sy, s.sw, s.sh = screen.name(), g.x(), g.y(), g.width(), g.height()
+        fx, fy = g.width() / s.sw, g.height() / s.sh
+        self.setGeometry(round(g.x() + (s.x - s.sx) * fx), round(g.y() + (s.y - s.sy) * fy),
+                         max(MIN_SIDE, round(s.w * fx)), max(MIN_SIDE, round(s.h * fy)))
+
     def _commit(self) -> None:
-        g = self.geometry()
-        self.state.x, self.state.y, self.state.w, self.state.h = g.x(), g.y(), g.width(), g.height()
-        self.changed.emit(self.state)
+        """Store the current window geometry in the reference screen's coordinates."""
+        geo, s = self.geometry(), self.state
+        screen = QGuiApplication.screenAt(geo.center()) or self.screen()
+        g = screen.geometry()
+        if screen.name() != s.screen or not s.sw or not s.sh:
+            # moved to another monitor (or first time): that screen becomes the reference
+            s.screen, s.sx, s.sy, s.sw, s.sh = screen.name(), g.x(), g.y(), g.width(), g.height()
+        fx, fy = s.sw / g.width(), s.sh / g.height()
+        s.x = round(s.sx + (geo.x() - g.x()) * fx)
+        s.y = round(s.sy + (geo.y() - g.y()) * fy)
+        s.w, s.h = round(geo.width() * fx), round(geo.height() * fy)
+        self.changed.emit(s)
+
+    def keep_on_top(self) -> None:
+        """Fullscreen games push themselves to the front; quietly take the top spot back."""
+        if self.isVisible():
+            winapi.keep_topmost(int(self.winId()))
 
     def closeEvent(self, event) -> None:
         self._timer.stop()
@@ -519,7 +555,7 @@ class ProfileOSD(QWidget):
 
         p.setPen(QColor(theme.MUTED))
         p.setFont(theme.ui_font(8.5))
-        sub = f"Profil {self.index + 1} von {self.count}  ·  {self.overlays} Overlay{'' if self.overlays == 1 else 's'}"
+        sub = tr("Profil {a0} von {a1}  ·  {a2} Overlay{a3}", a0=self.index + 1, a1=self.count, a2=self.overlays, a3='' if self.overlays == 1 else 's')
         p.drawText(QRectF(r.left(), r.top() + 40, r.width(), 18), Qt.AlignmentFlag.AlignCenter, sub)
 
         # position dots

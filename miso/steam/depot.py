@@ -27,6 +27,7 @@ from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
 
 from .cm import API, USER_AGENT, CMClient, SteamError, http_json
 from .protobuf import Message
+from ..i18n import tr
 
 try:
     from compression import zstd
@@ -85,13 +86,13 @@ def decompress_chunk(data: bytes) -> bytes:
         return lzma.decompress(alone, format=lzma.FORMAT_ALONE)
     if data[:4] == b"VSZa":
         if zstd is None:
-            raise SteamError("Zstd-Chunk benötigt Python 3.14+")
+            raise SteamError(tr("Zstd-Chunk benötigt Python 3.14+"))
         dec = zstd.ZstdDecompressor()
         return dec.decompress(data[8:])
     if data[:2] == b"PK":
         with zipfile.ZipFile(io.BytesIO(data)) as z:
             return z.read(z.namelist()[0])
-    raise SteamError("Unbekanntes Chunk-Format")
+    raise SteamError(tr("Unbekanntes Chunk-Format"))
 
 
 # -- CDN ----------------------------------------------------------------------
@@ -128,7 +129,7 @@ def parse_manifest(raw: bytes, key: bytes) -> tuple[list[FileEntry], Message]:
         elif magic == MAGIC_METADATA:
             metadata = Message(section)
     if payload is None or metadata is None:
-        raise SteamError("Manifest ist beschädigt")
+        raise SteamError(tr("Manifest ist beschädigt"))
 
     encrypted_names = bool(metadata.int(4))
     files = []
@@ -162,7 +163,9 @@ class WorkshopDownloader:
         if self.cancel.is_set():
             raise Cancelled()
 
-    def download(self, manifest_id: int, target_dir: Path) -> list[Path]:
+    def download(self, manifest_id: int, target_dir: Path, accept=None) -> list[Path]:
+        """Download into `target_dir`. Only files for which `accept(name)` is true are fetched;
+        everything else (scripts, executables, …) never touches the disk."""
         depot = self.app_id  # workshop content lives in the app's own depot
         with CMClient(log=self.log) as cm:
             self._check()
@@ -171,7 +174,7 @@ class WorkshopDownloader:
         self._check()
 
         hosts = cdn_hosts()
-        self.log("Lade Manifest …")
+        self.log(tr("Lade Manifest …"))
         raw = None
         for host in hosts[:4]:
             try:
@@ -180,14 +183,32 @@ class WorkshopDownloader:
             except urllib.error.URLError:
                 continue
         if raw is None:
-            raise SteamError("Manifest konnte nicht geladen werden")
+            raise SteamError(tr("Manifest konnte nicht geladen werden"))
         files, _ = parse_manifest(raw, key)
+
+        root = target_dir.resolve()
+        wanted = []
+        for f in files:
+            if f.is_dir:
+                continue
+            dest = (target_dir / f.name).resolve()
+            if root not in dest.parents:          # "..\..\evil.exe" and absolute paths
+                continue
+            if accept and not accept(f.name):
+                continue
+            wanted.append(f)
+        skipped = sum(1 for f in files if not f.is_dir) - len(wanted)
+        if skipped:
+            self.log(tr("{a0} Datei(en) übersprungen (kein Bild)", a0=skipped))
+        if not wanted:
+            raise SteamError(tr("Item enthält keine Bilder"))
+        files = wanted
 
         total = sum(f.size for f in files if not f.is_dir)
         done = 0
         lock = threading.Lock()
         self.progress(0, total)
-        self.log(f"{len(files)} Datei(en), {total / 1048576:.1f} MB")
+        self.log(tr("{a0} Datei(en), {a1:.1f} MB", a0=len(files), a1=total / 1048576))
 
         target_dir.mkdir(parents=True, exist_ok=True)
         written: list[Path] = []
@@ -195,9 +216,6 @@ class WorkshopDownloader:
         jobs: list[tuple[FileEntry, Chunk]] = []
         for f in files:
             path = target_dir / f.name
-            if f.is_dir:
-                path.mkdir(parents=True, exist_ok=True)
-                continue
             path.parent.mkdir(parents=True, exist_ok=True)
             fh = open(path, "wb")
             fh.truncate(f.size)
@@ -214,13 +232,13 @@ class WorkshopDownloader:
                     data = http_get(f"https://{host}/depot/{depot}/chunk/{chunk.sha.hex()}")
                     plain = decompress_chunk(symmetric_decrypt(data, key))
                     if len(plain) != chunk.size:
-                        raise SteamError("Chunk hat falsche Größe")
+                        raise SteamError(tr("Chunk hat falsche Größe"))
                     if zlib.adler32(plain, 0) != chunk.checksum:
-                        raise SteamError("Chunk-Prüfsumme stimmt nicht")
+                        raise SteamError(tr("Chunk-Prüfsumme stimmt nicht"))
                     return plain
                 except (urllib.error.URLError, SteamError, OSError, ValueError) as e:
                     last = e
-            raise SteamError(f"Chunk-Download fehlgeschlagen: {last}")
+            raise SteamError(tr("Chunk-Download fehlgeschlagen: {a0}", a0=last))
 
         def work(entry: FileEntry, chunk: Chunk) -> None:
             nonlocal done

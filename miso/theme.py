@@ -83,6 +83,7 @@ class Icon:
     BROOM = ""
     CLOCK = ""
     WARNING = ""
+    GRIP = ""
     CHEVRON_LEFT = ""
     CHEVRON_RIGHT = ""
     MORE = ""

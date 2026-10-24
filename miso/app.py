@@ -3,11 +3,12 @@ from __future__ import annotations
 
 import ctypes
 import hashlib
+import os
 import re
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QRectF, Qt, QTimer, QUrl, Signal
+from PySide6.QtCore import QObject, QProcess, QRectF, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (QAction, QColor, QCursor, QDesktopServices, QGuiApplication, QKeySequence, QPainter,
                            QPen, QShortcut)
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
@@ -21,6 +22,7 @@ from .pages import ActivePage, LibraryPage, SettingsPage, WorkshopPage
 from .store import APP_NAME, DATA_DIR, UPLOAD_DIR, LibraryItem, OverlayState, Store
 from .widgets import (ConfirmDialog, FadeStack, IconButton, ImageLoader, NavButton, NavIndicator, ProgressDialog,
                       TitleButton, ToastHost, ToggleSwitch, human_size)
+from .i18n import tr
 
 TITLEBAR_H = 44
 # one instance per data folder
@@ -40,6 +42,27 @@ class OverlayManager(QObject):
         self.windows: dict[str, OverlayWindow] = {}
         self.osd = ProfileOSD()
         store.filter_changed.connect(self.apply_filter)
+        # games in (exclusive) fullscreen push themselves to the top and may switch the resolution
+        self._topmost = QTimer(self, interval=2000, timeout=self.keep_on_top)
+        self._topmost.start()
+        self._remap = QTimer(self, singleShot=True, interval=150, timeout=self.remap)
+        app = QGuiApplication.instance()
+        for screen in app.screens():
+            self._watch_screen(screen)
+        app.screenAdded.connect(lambda sc: (self._watch_screen(sc), self._remap.start()))
+        app.screenRemoved.connect(lambda sc: self._remap.start())
+
+    def _watch_screen(self, screen) -> None:
+        screen.geometryChanged.connect(lambda *_: self._remap.start())
+
+    def remap(self) -> None:
+        """Screen size changed (e.g. a game set another resolution): keep overlays at the same spot."""
+        for win in self.windows.values():
+            win.place_on_screen()
+
+    def keep_on_top(self) -> None:
+        for win in self.windows.values():
+            win.keep_on_top()
 
     def should_show(self, state: OverlayState) -> bool:
         return state.visible and not self.all_hidden and not self.store.hidden(state.title)
@@ -212,10 +235,10 @@ class EditModeCard(QWidget):
         self.switch.setChecked(edit)
         self.switch._set(1.0 if edit else 0.0)
         self.switch.blockSignals(False)
-        self.title.setText("Bearbeiten" if edit else "Fixiert")
+        self.title.setText(tr("Bearbeiten") if edit else tr("Fixiert"))
         key = self.manager.store.hotkey_text("edit")
-        self.hint.setText(f"Overlays ziehen & skalieren\n{key} zum Fixieren" if edit
-                          else f"Overlays sind durchklickbar\n{key} zum Bearbeiten")
+        self.hint.setText(tr("Overlays ziehen & skalieren\n{a0} zum Fixieren", a0=key) if edit
+                          else tr("Overlays sind durchklickbar\n{a0} zum Bearbeiten", a0=key))
         self.update()
 
     def paintEvent(self, e) -> None:
@@ -242,15 +265,15 @@ class ProfileSwitcher(QWidget):
         lay = QHBoxLayout(self)
         lay.setContentsMargins(6, 6, 6, 6)
         lay.setSpacing(2)
-        prev = IconButton(theme.Icon.CHEVRON_LEFT, "Vorheriges Profil", size=30)
-        nxt = IconButton(theme.Icon.CHEVRON_RIGHT, "Nächstes Profil", size=30)
+        prev = IconButton(theme.Icon.CHEVRON_LEFT, tr("Vorheriges Profil"), size=30)
+        nxt = IconButton(theme.Icon.CHEVRON_RIGHT, tr("Nächstes Profil"), size=30)
         self._buttons = (prev, nxt)
         prev.clicked.connect(lambda: manager.cycle_profile(-1))
         nxt.clicked.connect(lambda: manager.cycle_profile(1))
         self.name = QPushButton()
         self.name.setObjectName("Ghost")
         self.name.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.name.setToolTip("Profile verwalten")
+        self.name.setToolTip(tr("Profile verwalten"))
         self.name.clicked.connect(on_open)
         lay.addWidget(prev)
         lay.addWidget(self.name, 1)
@@ -261,12 +284,12 @@ class ProfileSwitcher(QWidget):
 
     def refresh(self) -> None:
         prev, nxt = self._buttons
-        prev.setToolTip(f"Vorheriges Profil ({self.store.hotkey_text('prev')})")
-        nxt.setToolTip(f"Nächstes Profil ({self.store.hotkey_text('next')})")
+        prev.setToolTip(tr("Vorheriges Profil ({a0})", a0=self.store.hotkey_text('prev')))
+        nxt.setToolTip(tr("Nächstes Profil ({a0})", a0=self.store.hotkey_text('next')))
         pr = self.store.profile
         fm = self.name.fontMetrics()
         self.name.setText(fm.elidedText(pr.name, Qt.TextElideMode.ElideRight, 120))
-        self.setToolTip(f"Profil {self.store.profiles.index(pr) + 1} von {len(self.store.profiles)}")
+        self.setToolTip(tr("Profil {a0} von {a1}", a0=self.store.profiles.index(pr) + 1, a1=len(self.store.profiles)))
 
     def paintEvent(self, e) -> None:
         p = QPainter(self)
@@ -298,11 +321,11 @@ class DropHint(QWidget):
         p.setFont(theme.icon_font(30))
         p.drawText(r.adjusted(0, -70, 0, 0), Qt.AlignmentFlag.AlignCenter, theme.Icon.UPLOAD)
         p.setFont(theme.ui_font(15, theme.QFont.Weight.DemiBold, display=True))
-        p.drawText(r.adjusted(0, 20, 0, 0), Qt.AlignmentFlag.AlignCenter, "Loslassen zum Hinzufügen")
+        p.drawText(r.adjusted(0, 20, 0, 0), Qt.AlignmentFlag.AlignCenter, tr("Loslassen zum Hinzufügen"))
         p.setPen(QColor(theme.MUTED))
         p.setFont(theme.ui_font(10))
         p.drawText(r.adjusted(0, 80, 0, 0), Qt.AlignmentFlag.AlignCenter,
-                   "Dateien, oder Bilder und GIFs direkt aus dem Browser")
+                   tr("Dateien, oder Bilder und GIFs direkt aus dem Browser"))
         p.end()
 
 
@@ -345,7 +368,7 @@ class MainWindow(QWidget):
         self.updater.failed.connect(self._on_update_check_failed)
         self.importer = importer.Importer()
         self.importer.imported.connect(self._on_imported)
-        self.importer.failed.connect(lambda m: self.toast(f"Hinzufügen fehlgeschlagen: {m}", "error"))
+        self.importer.failed.connect(lambda m: self.toast(tr("Hinzufügen fehlgeschlagen: {a0}", a0=m), "error"))
         self.importer.busy.connect(self._on_import_busy)
         QShortcut(QKeySequence.StandardKey.Paste, self, self.paste,
                   context=Qt.ShortcutContext.WindowShortcut)
@@ -366,8 +389,8 @@ class MainWindow(QWidget):
         sl.addWidget(Logo())
         sl.addSpacing(14)
         self.nav: list[NavButton] = []
-        for glyph, label in ((theme.Icon.COMPASS, "Entdecken"), (theme.Icon.LIBRARY, "Bibliothek"),
-                             (theme.Icon.LAYERS, "Overlays"),(theme.Icon.SETTINGS, "Einstellungen")):
+        for glyph, label in ((theme.Icon.COMPASS, tr("Entdecken")), (theme.Icon.LIBRARY, tr("Bibliothek")),
+                             (theme.Icon.LAYERS, tr("Overlays")),(theme.Icon.SETTINGS, tr("Einstellungen"))):
             b = NavButton(glyph, label)
             b.clicked.connect(lambda _=False, i=len(self.nav): self.go(i))
             sl.addWidget(b)
@@ -496,7 +519,7 @@ class MainWindow(QWidget):
         new = combo or hotkeys.default(action)
         clash = next((a for a in hotkeys.ACTIONS if a != action and self.store.hotkey(a) == new), None)
         if clash:
-            self.toast(f"{hotkeys.display(new)} ist schon für „{hotkeys.ACTIONS[clash][1]}“ vergeben", "error")
+            self.toast(tr("{a0} ist schon für „{a1}“ vergeben", a0=hotkeys.display(new), a1=hotkeys.ACTIONS[clash][1]), "error")
             self.register_hotkeys()
             return False
         old = self.store.settings.hotkeys.get(action)
@@ -504,7 +527,7 @@ class MainWindow(QWidget):
         if action in self.register_hotkeys():
             self.store.set_hotkey(action, old)
             self.register_hotkeys()
-            self.toast(f"{hotkeys.display(new)} wird schon von einem anderen Programm benutzt", "error")
+            self.toast(tr("{a0} wird schon von einem anderen Programm benutzt", a0=hotkeys.display(new)), "error")
             return False
         self.toast(f"{hotkeys.ACTIONS[action][1]}: {self.store.hotkey_text(action)}", "ok")
         return True
@@ -538,6 +561,9 @@ class MainWindow(QWidget):
         in_titlebar = y < TITLEBAR_H
         in_logo = x < 236 and y < 70
         return winapi.HTCAPTION if in_titlebar or in_logo else winapi.HTCLIENT
+
+    def restart(self) -> None:
+        restart_app()
 
     def toggle_max(self) -> None:
         self.showNormal() if self.isMaximized() else self.showMaximized()
@@ -573,13 +599,12 @@ class MainWindow(QWidget):
         first = not self.store.overlays
         self.manager.place(item, near=self)
         if first and self.store.settings.show_tips:
-            self.toast(f"Ziehen zum Verschieben, Mausrad zum Skalieren. {self.store.hotkey_text('edit')} "
-                       "fixiert die Overlays.")
+            self.toast(tr("Ziehen zum Verschieben, Mausrad zum Skalieren. {a0} fixiert die Overlays.", a0=self.store.hotkey_text('edit')))
         else:
-            self.toast(f"„{item.title}“ platziert", "ok")
+            self.toast(tr("„{a0}“ platziert", a0=item.title), "ok")
 
     def _on_download_done(self, item_id: str, item: LibraryItem) -> None:
-        self.toast(f"„{item.title}“ heruntergeladen. Klick drauf zum Platzieren", "ok")
+        self.toast(tr("„{a0}“ heruntergeladen. Klick drauf zum Platzieren", a0=item.title), "ok")
 
     # -- uploads (files, browser drops, Ctrl+V) ---------------------------------
     def import_files(self, files: list[str]) -> None:
@@ -587,11 +612,11 @@ class MainWindow(QWidget):
 
     def import_sources(self, sources: list) -> None:
         if not sources:
-            self.toast("Da war kein Bild dabei", "error")
+            self.toast(tr("Da war kein Bild dabei"), "error")
             return
         n = self.importer.run(sources)
-        self.toast(f"{n} Bild{'er' if n > 1 else ''} wird hinzugefügt …" if any(k == "url" for k, _ in sources)
-                   else f"{n} Bild{'er' if n > 1 else ''} wird hochgeladen …")
+        self.toast(tr("{a0} Bild{a1} wird hinzugefügt …", a0=n, a1='er' if n > 1 else '') if any(k == "url" for k, _ in sources)
+                   else tr("{a0} Bild{a1} wird hochgeladen …", a0=n, a1='er' if n > 1 else ''))
 
     def paste(self) -> None:
         if QApplication.focusWidget() and isinstance(QApplication.focusWidget(), QLineEdit):
@@ -609,14 +634,15 @@ class MainWindow(QWidget):
         if pending == 0 and getattr(self, "_import_count", 0):
             n = self._import_count
             self._import_count = 0
-            self.toast(f"{n} Bild{'er' if n > 1 else ''} in der Bibliothek", "ok")
+            self.toast(tr("{a0} Bild{a1} in der Bibliothek", a0=n, a1='er' if n > 1 else ''), "ok")
 
     # -- deleting (always confirmed by the caller) ------------------------------
     def delete_items(self, items: list[LibraryItem]) -> int:
         freed = 0
         for item in items:
             freed += item.size() if item.deletable else 0
-            self.manager.remove_path(item.path)
+            for path in item.all_paths:
+                self.manager.remove_path(path)
             self.store.remove_library(item)
             workshop.delete_workshop_files(item)
             path = Path(item.path)
@@ -625,30 +651,29 @@ class MainWindow(QWidget):
         return freed
 
     def delete_library_item(self, item: LibraryItem) -> None:
-        on_screen = item.path in self.manager.active_paths()
-        text = ("Die Datei wird von deinem PC gelöscht." if item.deletable
-                else "Der Eintrag verschwindet aus der Bibliothek, die Originaldatei bleibt.")
+        on_screen = bool(set(item.all_paths) & set(self.manager.active_paths()))
+        text = (tr("Die Datei wird von deinem PC gelöscht.") if item.deletable
+                else tr("Der Eintrag verschwindet aus der Bibliothek, die Originaldatei bleibt."))
         if on_screen:
-            text += " Es wird auch vom Bildschirm entfernt."
-        if ConfirmDialog.ask(self, f"„{item.title}“ löschen?", text, "Löschen"):
+            text += tr(" Es wird auch vom Bildschirm entfernt.")
+        if ConfirmDialog.ask(self, tr("„{a0}“ löschen?", a0=item.title), text, tr("Löschen")):
             freed = self.delete_items([item])
-            self.toast(f"„{item.title}“ gelöscht" + (f" · {human_size(freed)} frei" if freed else ""))
+            self.toast(tr("„{a0}“ gelöscht", a0=item.title) + (tr(" · {a0} frei", a0=human_size(freed)) if freed else ""))
 
     def delete_unused(self, days: int | None = None, auto: bool = False) -> None:
         items = self.store.unused(days)
         if not items:
             if not auto:
-                self.toast("Nichts zu löschen. Alles wird gerade benutzt oder ist favorisiert.")
+                self.toast(tr("Nichts zu löschen. Alles wird gerade benutzt oder ist favorisiert."))
             return
         size = sum(i.size() for i in items if i.deletable)
-        names = ", ".join(i.title for i in items[:4]) + (f" und {len(items) - 4} weitere" if len(items) > 4 else "")
-        when = f"seit {days} Tagen nicht benutzt" if days else "gerade nicht auf dem Bildschirm"
-        title = f"{len(items)} ungenutzte{'s' if len(items) == 1 else ''} Element{'' if len(items) == 1 else 'e'} löschen?"
-        text = (f"{names}.\n\nDiese Elemente sind {when} und nicht favorisiert. "
-                f"Das gibt {human_size(size)} frei. Favoriten werden nie gelöscht.")
-        if ConfirmDialog.ask(self, title, text, "Löschen", cancel="Diesmal nicht" if auto else "Abbrechen"):
+        names = ", ".join(i.title for i in items[:4]) + (tr(" und {a0} weitere", a0=len(items) - 4) if len(items) > 4 else "")
+        when = tr("seit {a0} Tagen nicht benutzt", a0=days) if days else tr("gerade nicht auf dem Bildschirm")
+        title = tr("{a0} ungenutzte{a1} Element{a2} löschen?", a0=len(items), a1='s' if len(items) == 1 else '', a2='' if len(items) == 1 else 'e')
+        text = (tr("{a0}.\n\nDiese Elemente sind {a1} und nicht favorisiert. Das gibt {a2} frei. Favoriten werden nie gelöscht.", a0=names, a1=when, a2=human_size(size)))
+        if ConfirmDialog.ask(self, title, text, tr("Löschen"), cancel=tr("Diesmal nicht") if auto else tr("Abbrechen")):
             freed = self.delete_items(items)
-            self.toast(f"{len(items)} gelöscht · {human_size(freed)} frei", "ok")
+            self.toast(tr("{a0} gelöscht · {a1} frei", a0=len(items), a1=human_size(freed)), "ok")
 
     def check_auto_delete(self) -> None:
         days = self.store.settings.auto_delete_days
@@ -661,11 +686,11 @@ class MainWindow(QWidget):
             return
         self._manual_update_check = manual
         if manual:
-            self.toast("Suche nach Updates …")
+            self.toast(tr("Suche nach Updates …"))
         self.updater.check()
 
     def _on_update_available(self, release) -> None:
-        self.update_pill.setText(f"  Update auf {release.version}")
+        self.update_pill.setText(tr("  Update auf {a0}", a0=release.version))
         self.update_pill.show()
         manual = getattr(self, "_manual_update_check", False)
         self._manual_update_check = False
@@ -678,12 +703,12 @@ class MainWindow(QWidget):
     def _on_up_to_date(self) -> None:
         if getattr(self, "_manual_update_check", False):
             self._manual_update_check = False
-            self.toast(f"Miso ist aktuell (Version {__version__})", "ok")
+            self.toast(tr("Miso ist aktuell (Version {a0})", a0=__version__), "ok")
 
     def _on_update_check_failed(self, message: str) -> None:
         if getattr(self, "_manual_update_check", False):
             self._manual_update_check = False
-            self.toast(f"Update-Suche fehlgeschlagen: {message}", "error")
+            self.toast(tr("Update-Suche fehlgeschlagen: {a0}", a0=message), "error")
 
     def offer_update(self, release, manual: bool = False) -> None:
         if release is None:
@@ -694,11 +719,11 @@ class MainWindow(QWidget):
         notes = re.sub(r"\n{3,}", "\n\n", notes)
         if len(notes) > 600:
             notes = notes[:600].rsplit("\n", 1)[0] + "\n…"
-        text = f"Du hast Version {__version__}.\n\n{notes}" if notes else f"Du hast Version {__version__}."
+        text = tr("Du hast Version {a0}.\n\n{a1}", a0=__version__, a1=notes) if notes else tr("Du hast Version {a0}.", a0=__version__)
         if not updater.is_installed():
-            text += "\n\nDiese Kopie ist nicht installiert (portabel). Die Release-Seite wird im Browser geöffnet."
-        if ConfirmDialog.ask(self, f"Miso {release.version} ist da", text, "Jetzt aktualisieren",
-                             cancel="Später", danger=False):
+            text += tr("\n\nDiese Kopie ist nicht installiert (portabel). Die Release-Seite wird im Browser geöffnet.")
+        if ConfirmDialog.ask(self, tr("Miso {a0} ist da", a0=release.version), text, tr("Jetzt aktualisieren"),
+                             cancel=tr("Später"), danger=False):
             self.start_update(release)
         else:
             self.store.settings.update_dismissed = release.version
@@ -708,12 +733,12 @@ class MainWindow(QWidget):
         if not updater.is_installed():
             QDesktopServices.openUrl(QUrl(release.page_url))
             return
-        dlg = ProgressDialog(self, f"Miso {release.version} wird heruntergeladen")
+        dlg = ProgressDialog(self, tr("Miso {a0} wird heruntergeladen", a0=release.version))
         self.updater.progress.connect(dlg.set_progress)
         dlg.cancelled.connect(lambda: (self.updater.cancel.set(), dlg.reject()))
 
         def done(path: str) -> None:
-            dlg.status.setText("Wird installiert, Miso startet gleich neu …")
+            dlg.status.setText(tr("Wird installiert, Miso startet gleich neu …"))
             dlg.cancel_btn.setEnabled(False)
             updater.launch_installer(Path(path))
             self._quitting = True
@@ -721,8 +746,8 @@ class MainWindow(QWidget):
 
         def failed(message: str) -> None:
             dlg.reject()
-            if message != "Abgebrochen":
-                self.toast(f"Update fehlgeschlagen: {message}", "error")
+            if message != tr("Abgebrochen"):
+                self.toast(tr("Update fehlgeschlagen: {a0}", a0=message), "error")
 
         self.updater.downloaded.connect(done)
         self.updater.download_failed.connect(failed)
@@ -788,9 +813,9 @@ class MainWindow(QWidget):
             app = QApplication.instance()
             if not getattr(self, "_tray_hint", False) and hasattr(app, "tray"):
                 self._tray_hint = True
-                why = ("Deine Overlays bleiben auf dem Bildschirm." if self.store.settings.close_mode == "auto"
-                       else "Miso läuft im Hintergrund weiter.")
-                app.tray.showMessage(APP_NAME, f"{why} Rechtsklick aufs Tray-Icon für Optionen.",
+                why = (tr("Deine Overlays bleiben auf dem Bildschirm.") if self.store.settings.close_mode == "auto"
+                       else tr("Miso läuft im Hintergrund weiter."))
+                app.tray.showMessage(APP_NAME, tr("{a0} Rechtsklick aufs Tray-Icon für Optionen.", a0=why),
                                      theme.app_icon(), 3500)
             return
         e.accept()
@@ -802,14 +827,14 @@ def make_tray(app: QApplication, window: MainWindow, manager: OverlayManager) ->
     tray = QSystemTrayIcon(theme.app_icon(), app)
     tray.setToolTip(APP_NAME)
     menu = QMenu()
-    menu.addAction("Miso öffnen", window.bring_to_front)
+    menu.addAction(tr("Miso öffnen"), window.bring_to_front)
     menu.addSeparator()
-    edit = QAction("Bearbeiten-Modus", menu, checkable=True)
+    edit = QAction(tr("Bearbeiten-Modus"), menu, checkable=True)
     edit.setChecked(manager.edit)
     edit.toggled.connect(manager.set_edit)
     manager.edit_changed.connect(edit.setChecked)
     menu.addAction(edit)
-    profiles = menu.addMenu("Profil")
+    profiles = menu.addMenu(tr("Profil"))
 
     def fill_profiles() -> None:
         profiles.clear()
@@ -819,7 +844,7 @@ def make_tray(app: QApplication, window: MainWindow, manager: OverlayManager) ->
             a.triggered.connect(lambda _=False, uid=pr.uid: manager.switch_profile(uid))
             profiles.addAction(a)
     profiles.aboutToShow.connect(fill_profiles)
-    hide = QAction("Overlays ausblenden", menu, checkable=True)
+    hide = QAction(tr("Overlays ausblenden"), menu, checkable=True)
     hide.toggled.connect(manager.set_all_hidden)
     manager.changed.connect(lambda: hide.setChecked(manager.all_hidden))
     menu.addAction(hide)
@@ -828,7 +853,7 @@ def make_tray(app: QApplication, window: MainWindow, manager: OverlayManager) ->
     def quit_app() -> None:
         window._quitting = True
         app.quit()
-    menu.addAction("Beenden", quit_app)
+    menu.addAction(tr("Beenden"), quit_app)
     tray.setContextMenu(menu)
     tray.activated.connect(lambda reason: window.bring_to_front()
                            if reason in (QSystemTrayIcon.ActivationReason.Trigger,
@@ -838,7 +863,41 @@ def make_tray(app: QApplication, window: MainWindow, manager: OverlayManager) ->
     return tray
 
 
+def _wait_for_previous_instance() -> None:
+    """After an in-app restart (language change) wait until the old process has really exited,
+    otherwise its global hotkeys would still be registered."""
+    arg = next((a for a in sys.argv if a.startswith("--restart-from=")), None)
+    if not arg or not winapi.IS_WIN:
+        return
+    try:
+        pid = int(arg.split("=", 1)[1])
+    except ValueError:
+        return
+    handle = ctypes.windll.kernel32.OpenProcess(0x00100000, False, pid)  # SYNCHRONIZE
+    if handle:
+        ctypes.windll.kernel32.WaitForSingleObject(handle, 8000)
+        ctypes.windll.kernel32.CloseHandle(handle)
+
+
+def restart_app() -> None:
+    """Start a fresh Miso and quit this one (used after switching the language)."""
+    app = QApplication.instance()
+    server = getattr(app, "single_instance", None)
+    if server:
+        server.close()
+    args = [a for a in sys.argv[1:] if not a.startswith("--restart-from=") and a != "--hidden"]
+    if not getattr(sys, "frozen", False):
+        args = [str(Path(sys.argv[0]).resolve())] + args
+    args.append(f"--restart-from={os.getpid()}")
+    QProcess.startDetached(sys.executable, args)
+    win = next((w for w in app.topLevelWidgets() if isinstance(w, MainWindow)), None)
+    if win:
+        win._quitting = True
+    app.quit()
+
+
 def main() -> int:
+    _wait_for_previous_instance()
     if winapi.IS_WIN:
         ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID("Miso.Overlay")
         # lets the installer/uninstaller notice a running Miso (Inno Setup "AppMutex")
@@ -858,6 +917,7 @@ def main() -> int:
     QLocalServer.removeServer(SINGLETON)
     server = QLocalServer()
     server.listen(SINGLETON)
+    app.single_instance = server
 
     theme.setup_fonts()
     app.setStyleSheet(theme.STYLESHEET)
@@ -865,6 +925,7 @@ def main() -> int:
     app.setWindowIcon(theme.app_icon())
 
     store = Store()
+    workshop.migrate_packs(store)
     theme.ANIMATIONS = store.settings.animations and theme.system_animations_enabled()
     manager = OverlayManager(store)
     downloads = workshop.DownloadManager(store)

@@ -4,15 +4,16 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from PySide6.QtCore import QEvent, QPoint, QRectF, Qt, QThreadPool, QTimer, QUrl, Signal
-from PySide6.QtGui import QColor, QDesktopServices, QPainter, QPen, QPixmap
-from PySide6.QtWidgets import (QButtonGroup, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
+from PySide6.QtCore import QEvent, QMimeData, QPoint, QRectF, Qt, QThreadPool, QTimer, QUrl, Signal
+from PySide6.QtGui import QColor, QCursor, QDesktopServices, QDrag, QPainter, QPen, QPixmap
+from PySide6.QtWidgets import (QApplication, QButtonGroup, QComboBox, QDialog, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
                                QMenu, QPushButton, QScrollArea, QSizePolicy, QSlider, QVBoxLayout, QWidget)
 
-from . import __version__, hotkeys, theme, workshop
+from . import __version__, hotkeys, i18n, theme, workshop
 from .store import CACHE_DIR, UPLOAD_DIR, WORKSHOP_DIR, LibraryItem, OverlayState, Store
-from .widgets import (CardGrid, ConfirmDialog, IconButton, ImageLoader, MediaCard, ToggleSwitch, human_ago,
+from .widgets import (CardGrid, ConfirmDialog, IconButton, ImageLoader, MediaCard, ToggleSwitch, fade_in_window, human_ago,
                       human_count, human_size, rounded)
+from .i18n import tr
 
 
 def page_header(title: str, subtitle: str = "") -> tuple[QWidget, QLabel]:
@@ -102,13 +103,13 @@ class WorkshopPage(QWidget):
         root.setContentsMargins(36, 8, 28, 0)
         root.setSpacing(18)
 
-        header, self.subtitle = page_header("Entdecken", "AnimaEngine Steam Workshop")
+        header, self.subtitle = page_header(tr("Entdecken"), "AnimaEngine Steam Workshop")
         root.addWidget(header)
 
         bar = QHBoxLayout()
         bar.setSpacing(12)
         self.search_box = QLineEdit()
-        self.search_box.setPlaceholderText("Workshop durchsuchen …")
+        self.search_box.setPlaceholderText(tr("Workshop durchsuchen …"))
         self.search_box.addAction(theme.glyph_icon(theme.Icon.SEARCH, theme.MUTED), QLineEdit.ActionPosition.LeadingPosition)
         self.search_box.setClearButtonEnabled(True)
         self.search_box.setMinimumWidth(260)
@@ -135,7 +136,7 @@ class WorkshopPage(QWidget):
             seg_lay.addWidget(b)
         bar.addWidget(seg)
         bar.addStretch()
-        refresh = IconButton(theme.Icon.REFRESH, "Neu laden", size=38)
+        refresh = IconButton(theme.Icon.REFRESH, tr("Neu laden"), size=38)
         refresh.clicked.connect(self.reload)
         bar.addWidget(refresh)
         root.addLayout(bar)
@@ -151,7 +152,7 @@ class WorkshopPage(QWidget):
         self.footer.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.footer.setMinimumHeight(40)
         cl.addWidget(self.footer)
-        self.retry = QPushButton("Erneut versuchen")
+        self.retry = QPushButton(tr("Erneut versuchen"))
         self.retry.hide()
         self.retry.clicked.connect(self._load_next)
         cl.addWidget(self.retry, 0, Qt.AlignmentFlag.AlignCenter)
@@ -221,7 +222,7 @@ class WorkshopPage(QWidget):
         self.loading = True
         self.retry.hide()
         if self.page > 0:
-            self.footer.setText("Lädt mehr …")
+            self.footer.setText(tr("Lädt mehr …"))
         job = workshop.BrowseJob(self.sort, self.search, self.page + 1, self.request)
         job.signals.done.connect(self._on_page)
         job.signals.failed.connect(self._on_page_failed)
@@ -238,12 +239,13 @@ class WorkshopPage(QWidget):
         self.page = page.page
         self.total_pages = page.total_pages
         what = f"„{self.search}“" if self.search else workshop.SORTS[self.sort]
-        self.subtitle.setText(f"AnimaEngine Steam Workshop  ·  {page.total:,} Items  ·  {what}".replace(",", "."))
+        total = f"{page.total:,}".replace(",", "." if i18n.LANG == "de" else ",")
+        self.subtitle.setText(f"AnimaEngine Steam Workshop  ·  {total} Items  ·  {what}")
         added = 0
         for item in page.items:
             if item.id in self.cards:
                 continue
-            meta = f"{human_count(item.subscriptions)} Abos  ·  {human_size(item.size)}"
+            meta = tr("{a0} Abos  ·  {a1}", a0=human_count(item.subscriptions), a1=human_size(item.size))
             card = MediaCard(item, item.title, meta, self.loader, item.thumb_url)
             card.setToolTip(item.title)
             card.clicked.connect(self._on_card_clicked)
@@ -264,11 +266,11 @@ class WorkshopPage(QWidget):
             hidden += hide
             card.setHidden(hide)
         self.grid.relayout()
-        note = f"  ·  {hidden} NSFW ausgeblendet" if hidden else ""
+        note = "  ·  " + tr("{a0} NSFW ausgeblendet", a0=hidden) if hidden else ""
         if len(self.cards) == hidden and self.page >= self.total_pages:
-            self.footer.setText("Keine Treffer." + note)
+            self.footer.setText(tr("Keine Treffer.") + note)
         elif self.page >= self.total_pages:
-            self.footer.setText("Das war alles" + note)
+            self.footer.setText(tr("Das war alles") + note)
         else:
             self.footer.setText(note.strip(" ·"))
         QTimer.singleShot(50, self._on_scroll)
@@ -280,7 +282,7 @@ class WorkshopPage(QWidget):
         self._skeleton_timer.stop()
         if self.page == 0:
             self.grid.clear()
-        self.footer.setText(f"Workshop konnte nicht geladen werden.\n{message}")
+        self.footer.setText(tr("Workshop konnte nicht geladen werden.\n{a0}", a0=message))
         self.retry.show()
 
     def _on_scroll(self, *_) -> None:
@@ -296,9 +298,9 @@ class WorkshopPage(QWidget):
         if self.downloads.is_downloading(item_id):
             card.set_state(progress=self.downloads.fraction(item_id), status=card.status)
         elif self.store.workshop_item(item_id):
-            card.set_state("Platzieren", theme.Icon.PIN, badge="In Bibliothek")
+            card.set_state(tr("Platzieren"), theme.Icon.PIN, badge=tr("In Bibliothek"))
         else:
-            card.set_state("Herunterladen", theme.Icon.DOWNLOAD)
+            card.set_state(tr("Herunterladen"), theme.Icon.DOWNLOAD)
 
     def _refresh_all_cards(self) -> None:
         for i in self.cards:
@@ -315,15 +317,15 @@ class WorkshopPage(QWidget):
         menu = QMenu(self)
         lib = self.store.workshop_item(item.id)
         if lib:
-            menu.addAction("Auf dem Bildschirm platzieren", lambda: self.place_requested.emit(lib))
+            menu.addAction(tr("Auf dem Bildschirm platzieren"), lambda: self.place_requested.emit(lib))
         elif self.downloads.is_downloading(item.id):
-            menu.addAction("Download abbrechen", lambda: self.downloads.cancel(item.id))
+            menu.addAction(tr("Download abbrechen"), lambda: self.downloads.cancel(item.id))
         else:
-            menu.addAction("Herunterladen", lambda: self.downloads.start(item))
-        menu.addAction("Im Steam Workshop ansehen", lambda: QDesktopServices.openUrl(QUrl(item.page_url)))
+            menu.addAction(tr("Herunterladen"), lambda: self.downloads.start(item))
+        menu.addAction(tr("Im Steam Workshop ansehen"), lambda: QDesktopServices.openUrl(QUrl(item.page_url)))
         if lib:
             menu.addSeparator()
-            menu.addAction("Aus Bibliothek löschen", lambda: self.window().delete_library_item(lib))
+            menu.addAction(tr("Aus Bibliothek löschen"), lambda: self.window().delete_library_item(lib))
         menu.exec(pos)
 
     def _on_progress(self, item_id: str, frac: float) -> None:
@@ -342,8 +344,103 @@ class WorkshopPage(QWidget):
         if card:
             card.status = ""
         self._refresh_card(item_id)
-        if message != "Abgebrochen":
-            self.toast(f"Download fehlgeschlagen: {message}", "error")
+        if message != tr("Abgebrochen"):
+            self.toast(tr("Download fehlgeschlagen: {a0}", a0=message), "error")
+
+
+# ======================================================================================
+def pack_entry(pack: LibraryItem, path: str) -> LibraryItem:
+    """A single image of a pack, shaped like a library item so it can be placed."""
+    stem = Path(path).stem.replace("_", " ").strip()
+    return LibraryItem(path=path, title=f"{pack.title} · {stem}", kind=pack.kind,
+                       workshop_id=pack.workshop_id)
+
+
+class PackDialog(QDialog):
+    """Browse the images of a workshop pack and place any of them."""
+
+    def __init__(self, parent: QWidget, pack: LibraryItem, loader: ImageLoader, store: Store) -> None:
+        super().__init__(parent)
+        self.pack, self.loader, self.store = pack, loader, store
+        self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint
+                            | Qt.WindowType.WindowStaysOnTopHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setModal(True)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(18, 18, 18, 18)
+        card = QFrame()
+        card.setObjectName("DialogCard")
+        card.setStyleSheet(f"QFrame#DialogCard {{ background:{theme.SURFACE_2}; border:1px solid #33333A;"
+                           f" border-radius:16px; }}")
+        outer.addWidget(card)
+        lay = QVBoxLayout(card)
+        lay.setContentsMargins(24, 20, 20, 18)
+        lay.setSpacing(14)
+
+        head = QHBoxLayout()
+        col = QVBoxLayout()
+        col.setSpacing(2)
+        title = QLabel(pack.title)
+        title.setStyleSheet("font-size:14pt; font-weight:600; background:transparent;")
+        sub = QLabel(tr("{a0} Bilder  ·  Klicken zum Platzieren, mehrere nacheinander möglich", a0=len(pack.files)))
+        sub.setStyleSheet(f"color:{theme.MUTED}; background:transparent;")
+        col.addWidget(title)
+        col.addWidget(sub)
+        head.addLayout(col, 1)
+        self.search = QLineEdit()
+        self.search.setPlaceholderText(tr("Im Pack suchen …"))
+        self.search.addAction(theme.glyph_icon(theme.Icon.SEARCH, theme.MUTED), QLineEdit.ActionPosition.LeadingPosition)
+        self.search.setClearButtonEnabled(True)
+        self.search.setFixedWidth(240)
+        self.search.textChanged.connect(self._filter)
+        head.addWidget(self.search, 0, Qt.AlignmentFlag.AlignTop)
+        close = QPushButton(tr("Fertig"))
+        close.setObjectName("Primary")
+        close.setCursor(Qt.CursorShape.PointingHandCursor)
+        close.clicked.connect(self.accept)
+        head.addWidget(close, 0, Qt.AlignmentFlag.AlignTop)
+        lay.addLayout(head)
+
+        content = QWidget()
+        cl = QVBoxLayout(content)
+        cl.setContentsMargins(0, 0, 8, 8)
+        self.grid = CardGrid()
+        self.grid.MIN_W = 140
+        cl.addWidget(self.grid)
+        cl.addStretch()
+        lay.addWidget(scroll_wrap(content), 1)
+
+        for i, path in enumerate(pack.files):
+            entry = pack_entry(pack, path)
+            self.loader.request_file(path)
+            c = MediaCard(entry, Path(path).stem.replace("_", " "), human_size(entry.size()), loader,
+                          "file:" + path)
+            c.set_state(tr("Platzieren"), theme.Icon.PIN)
+            c.setToolTip(Path(path).name)
+            c.clicked.connect(self._place)
+            self.grid.add(c)
+            c.animate_in(min(i * 18, 400))
+        screen = parent.screen().availableGeometry() if parent else None
+        w = min(980, int(screen.width() * 0.8)) if screen else 900
+        h = min(700, int(screen.height() * 0.8)) if screen else 640
+        self.resize(w, h)
+
+    def _filter(self, text: str) -> None:
+        text = text.strip().lower()
+        for c in self.grid.cards:
+            c.setHidden(bool(text) and text not in c.title.lower())
+        self.grid.relayout()
+
+    def _place(self, entry: LibraryItem) -> None:
+        self.parentWidget().place(entry)
+
+    def showEvent(self, e) -> None:
+        super().showEvent(e)
+        parent = self.parentWidget()
+        if parent and parent.isVisible():
+            self.move(parent.geometry().center() - self.rect().center())
+        fade_in_window(self)
+        QTimer.singleShot(0, self.grid.relayout)
 
 
 # ======================================================================================
@@ -388,17 +485,16 @@ class UploadZone(QWidget):
         p.drawText(circle, Qt.AlignmentFlag.AlignCenter, theme.Icon.UPLOAD)
         p.setFont(theme.ui_font(10.5, theme.QFont.Weight.DemiBold))
         p.drawText(QRectF(84, r.top() + 22, r.width() - 100, 22), Qt.AlignmentFlag.AlignVCenter,
-                   "Eigene Bilder hochladen")
+                   tr("Eigene Bilder hochladen"))
         p.setPen(QColor(theme.MUTED))
         p.setFont(theme.ui_font(9))
         p.drawText(QRectF(84, r.top() + 46, r.width() - 100, 20), Qt.AlignmentFlag.AlignVCenter,
-                   "Klicken, Dateien reinziehen, Bilder direkt aus dem Browser ziehen oder Strg + V  ·  "
-                   "GIF, PNG, APNG, WebP, JPG")
+                   tr("Klicken, Dateien reinziehen, Bilder direkt aus dem Browser ziehen oder Strg + V  ·  GIF, PNG, APNG, WebP, JPG"))
         p.end()
 
 
-LIB_FILTERS = {"all": "Alle", "fav": "Favoriten", "workshop": "Workshop", "own": "Eigene"}
-LIB_SORTS = {"recent": "Zuletzt benutzt", "added": "Neu hinzugefügt", "name": "Name", "size": "Größe"}
+LIB_FILTERS = {"all": tr("Alle"), "fav": tr("Favoriten"), "workshop": "Workshop", "own": tr("Eigene")}
+LIB_SORTS = {"recent": tr("Zuletzt benutzt"), "added": tr("Neu hinzugefügt"), "name": "Name", "size": tr("Größe")}
 
 
 class LibraryPage(QWidget):
@@ -415,10 +511,10 @@ class LibraryPage(QWidget):
         root.setSpacing(16)
 
         top = QHBoxLayout()
-        header, self.subtitle = page_header("Bibliothek")
+        header, self.subtitle = page_header(tr("Bibliothek"))
         top.addWidget(header)
         top.addStretch()
-        add = QPushButton("  Hochladen")
+        add = QPushButton(tr("  Hochladen"))
         add.setObjectName("Primary")
         add.setIcon(theme.glyph_icon(theme.Icon.UPLOAD, theme.ON_ACCENT))
         add.setCursor(Qt.CursorShape.PointingHandCursor)
@@ -433,7 +529,7 @@ class LibraryPage(QWidget):
         bar = QHBoxLayout()
         bar.setSpacing(12)
         self.search = QLineEdit()
-        self.search.setPlaceholderText("Bibliothek durchsuchen …")
+        self.search.setPlaceholderText(tr("Bibliothek durchsuchen …"))
         self.search.addAction(theme.glyph_icon(theme.Icon.SEARCH, theme.MUTED), QLineEdit.ActionPosition.LeadingPosition)
         self.search.setClearButtonEnabled(True)
         self.search.setMaximumWidth(320)
@@ -467,8 +563,8 @@ class LibraryPage(QWidget):
         cl.setContentsMargins(0, 4, 8, 24)
         self.grid = CardGrid()
         cl.addWidget(self.grid)
-        self.empty = EmptyState(theme.Icon.LIBRARY, "Noch leer hier",
-                                "Lade etwas im Workshop herunter oder lade eigene Bilder hoch.")
+        self.empty = EmptyState(theme.Icon.LIBRARY, tr("Noch leer hier"),
+                                tr("Lade etwas im Workshop herunter oder lade eigene Bilder hoch."))
         cl.addWidget(self.empty)
         cl.addStretch()
         root.addWidget(scroll_wrap(content), 1)
@@ -479,8 +575,8 @@ class LibraryPage(QWidget):
         self.rebuild()
 
     def pick_files(self) -> None:
-        files, _ = QFileDialog.getOpenFileNames(self, "Bilder oder GIFs hochladen", str(Path.home() / "Pictures"),
-                                                "Bilder (*.gif *.png *.apng *.webp *.jpg *.jpeg *.bmp)")
+        files, _ = QFileDialog.getOpenFileNames(self, tr("Bilder oder GIFs hochladen"), str(Path.home() / "Pictures"),
+                                                tr("Bilder (*.gif *.png *.apng *.webp *.jpg *.jpeg *.bmp)"))
         if files:
             self.window().import_files(files)
 
@@ -536,10 +632,12 @@ class LibraryPage(QWidget):
         self._keys = set()
         n = 0
         self.grid.clear()
-        self.sort_btn.setText(f"Sortieren: {LIB_SORTS.get(self.store.settings.library_sort, '')}  ▾")
+        self.sort_btn.setText(tr("Sortieren: {a0}  ▾", a0=LIB_SORTS.get(self.store.settings.library_sort, '')))
         items, nsfw = self._visible_items()
         for item in items:
-            kind = {"workshop": "Workshop", "upload": "Eigenes"}.get(item.kind, "Verknüpft")
+            kind = {"workshop": "Workshop", "upload": tr("Eigenes")}.get(item.kind, tr("Verknüpft"))
+            if item.is_pack:
+                kind = tr("Pack · {a0} Bilder", a0=len(item.files))
             meta = f"{kind}  ·  {human_size(item.size())}  ·  {human_ago(item.used)}"
             key = item.preview_url and workshop.WorkshopItem(item.workshop_id, "", "", item.preview_url, 0, 0, 0, 0, []).thumb_url
             if key:
@@ -550,7 +648,7 @@ class LibraryPage(QWidget):
             card = MediaCard(item, item.title, meta, self.loader, key)
             card.setToolTip(item.title)
             card.favorite = item.favorite
-            card.clicked.connect(self.place_requested.emit)
+            card.clicked.connect(self._open)
             card.context.connect(self._menu)
             card.favorite_clicked.connect(lambda it: self.store.set_favorite(it, not it.favorite))
             self.grid.add(card)
@@ -560,44 +658,53 @@ class LibraryPage(QWidget):
                 n += 1
         self.grid.relayout()
         total = len(self.store.library) - nsfw
-        parts = [f"{total} {'Element' if total == 1 else 'Elemente'}",
+        parts = [f"{total} {tr("Element") if total == 1 else tr("Elemente")}",
                  human_size(sum(i.size() for i in self.store.library if i.deletable))]
         if nsfw:
-            parts.append(f"{nsfw} NSFW ausgeblendet")
+            parts.append(tr("{a0} NSFW ausgeblendet", a0=nsfw))
         self.subtitle.setText("  ·  ".join(parts))
         self.empty.setVisible(not items)
         if total and not items:
-            self.empty.text.setText("Keine Treffer für diesen Filter.")
+            self.empty.text.setText(tr("Keine Treffer für diesen Filter."))
         else:
-            self.empty.text.setText("Lade etwas im Workshop herunter oder lade eigene Bilder hoch.")
+            self.empty.text.setText(tr("Lade etwas im Workshop herunter oder lade eigene Bilder hoch."))
         self._update_badges()
 
     def _update_badges(self) -> None:
         active = self.active_paths()
         for card in self.grid.cards:
             item: LibraryItem = card.payload
-            count = active.count(item.path)
-            card.set_state("Platzieren", theme.Icon.PIN, badge=f"Aktiv{f' ×{count}' if count > 1 else ''}" if count else "")
+            count = sum(active.count(p) for p in item.all_paths)
+            card.set_state(tr("Platzieren"), theme.Icon.PIN, badge=tr("Aktiv") + (f" ×{count}" if count > 1 else "") if count else "")
+
+    def _open(self, item: LibraryItem) -> None:
+        if item.is_pack:
+            PackDialog(self.window(), item, self.loader, self.store).exec()
+        else:
+            self.place_requested.emit(item)
 
     def _rename(self, item: LibraryItem) -> None:
-        name = ConfirmDialog.ask_text(self.window(), "Bild umbenennen", item.title)
+        name = ConfirmDialog.ask_text(self.window(), tr("Bild umbenennen"), item.title)
         if name:
             self.store.rename_item(item, name)
 
     def _menu(self, item: LibraryItem, pos: QPoint) -> None:
         menu = QMenu(self)
-        menu.addAction("Auf dem Bildschirm platzieren", lambda: self.place_requested.emit(item))
-        menu.addAction("Aus Favoriten entfernen" if item.favorite else "Favorisieren",
+        if item.is_pack:
+            menu.addAction(tr("Pack öffnen …"), lambda: self._open(item))
+        else:
+            menu.addAction(tr("Auf dem Bildschirm platzieren"), lambda: self.place_requested.emit(item))
+        menu.addAction(tr("Aus Favoriten entfernen") if item.favorite else tr("Favorisieren"),
                        lambda: self.store.set_favorite(item, not item.favorite))
         if item.kind != "workshop":
-            menu.addAction("Umbenennen …", lambda: self._rename(item))
-        menu.addAction("Im Explorer zeigen", lambda: QDesktopServices.openUrl(
+            menu.addAction(tr("Umbenennen …"), lambda: self._rename(item))
+        menu.addAction(tr("Im Explorer zeigen"), lambda: QDesktopServices.openUrl(
             QUrl.fromLocalFile(str(Path(item.path).parent))))
         if item.workshop_id:
-            menu.addAction("Im Steam Workshop ansehen", lambda: QDesktopServices.openUrl(
+            menu.addAction(tr("Im Steam Workshop ansehen"), lambda: QDesktopServices.openUrl(
                 QUrl(workshop.ITEM_URL.format(item.workshop_id))))
         menu.addSeparator()
-        menu.addAction("Löschen …", lambda: self.window().delete_library_item(item))
+        menu.addAction(tr("Löschen …"), lambda: self.window().delete_library_item(item))
         menu.exec(pos)
 
 
@@ -614,6 +721,16 @@ class OverlayRow(QFrame):
         lay.setContentsMargins(12, 12, 14, 12)
         lay.setSpacing(14)
 
+        grip = QLabel(theme.Icon.GRIP)
+        grip.setFont(theme.icon_font(10))
+        grip.setStyleSheet(f"color:{theme.DIM}; background:transparent;")
+        grip.setToolTip(tr("Ziehen zum Sortieren"))
+        grip.setCursor(Qt.CursorShape.SizeAllCursor)
+        grip.setFixedWidth(16)
+        grip.mousePressEvent = self._grip_press
+        grip.mouseMoveEvent = self._grip_move
+        lay.addWidget(grip)
+        self._press: QPoint | None = None
         self.thumb = QLabel()
         self.thumb.setFixedSize(60, 60)
         lay.addWidget(self.thumb)
@@ -638,13 +755,13 @@ class OverlayRow(QFrame):
         op = QLabel(theme.Icon.BRIGHTNESS)
         op.setFont(theme.icon_font(9))
         op.setObjectName("Muted")
-        op.setToolTip("Deckkraft")
+        op.setToolTip(tr("Deckkraft"))
         lay.addWidget(op)
         self.slider = QSlider(Qt.Orientation.Horizontal)
         self.slider.setRange(10, 100)
         self.slider.setValue(int(state.opacity * 100))
         self.slider.setFixedWidth(130)
-        self.slider.setToolTip("Deckkraft")
+        self.slider.setToolTip(tr("Deckkraft"))
         self.slider.valueChanged.connect(self._opacity)
         lay.addWidget(self.slider)
         self.pct = QLabel(f"{int(state.opacity * 100)} %")
@@ -652,11 +769,11 @@ class OverlayRow(QFrame):
         self.pct.setFixedWidth(40)
         lay.addWidget(self.pct)
 
-        self.eye = IconButton(theme.Icon.EYE if state.visible else theme.Icon.EYE_OFF, "Ein-/Ausblenden")
+        self.eye = IconButton(theme.Icon.EYE if state.visible else theme.Icon.EYE_OFF, tr("Ein-/Ausblenden"))
         self.eye.clicked.connect(self._toggle_visible)
-        center = IconButton(theme.Icon.CENTER, "In die Bildschirmmitte")
+        center = IconButton(theme.Icon.CENTER, tr("In die Bildschirmmitte"))
         center.clicked.connect(lambda: manager.center(state))
-        delete = IconButton(theme.Icon.DELETE, "Entfernen", danger_hover=True)
+        delete = IconButton(theme.Icon.DELETE, tr("Entfernen"), danger_hover=True)
         delete.clicked.connect(lambda: manager.remove(state))
         for b in (self.eye, center, delete):
             lay.addWidget(b)
@@ -683,7 +800,7 @@ class OverlayRow(QFrame):
 
     def refresh(self) -> None:
         s = self.state
-        self.meta.setText(f"{s.w} × {s.h} px  ·  Position {s.x}, {s.y}" + ("" if s.visible else "  ·  ausgeblendet"))
+        self.meta.setText(f"{s.w} × {s.h} px  ·  Position {s.x}, {s.y}" + ("" if s.visible else "  ·  " + tr("ausgeblendet")))
         self.eye.glyph = theme.Icon.EYE if s.visible else theme.Icon.EYE_OFF
         self.eye.update()
 
@@ -691,17 +808,106 @@ class OverlayRow(QFrame):
         self.pct.setText(f"{v} %")
         self.manager.set_opacity(self.state, v / 100)
 
+    def _grip_press(self, e) -> None:
+        if e.button() == Qt.MouseButton.LeftButton:
+            self._press = e.globalPosition().toPoint()
+
+    def _grip_move(self, e) -> None:
+        moved = self._press is not None and \
+            (e.globalPosition().toPoint() - self._press).manhattanLength() >= QApplication.startDragDistance()
+        if moved:
+            self._press = None
+            start_drag(self, OVERLAY_MIME, self.state.uid, self)
+
     def _toggle_visible(self) -> None:
         self.manager.set_visible(self.state, not self.state.visible)
         self.refresh()
 
 
+PROFILE_MIME = "application/x-miso-profile"
+OVERLAY_MIME = "application/x-miso-overlay"
+
+
+def start_drag(source: QWidget, mime_type: str, uid: str, preview: QWidget) -> None:
+    """Begin an internal drag carrying `uid`, showing a faded snapshot of `preview`."""
+    mime = QMimeData()
+    mime.setData(mime_type, uid.encode())
+    drag = QDrag(source)
+    drag.setMimeData(mime)
+    snap = preview.grab()
+    faded = QPixmap(snap.size())
+    faded.setDevicePixelRatio(snap.devicePixelRatio())
+    faded.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(faded)
+    painter.setOpacity(0.85)
+    painter.drawPixmap(0, 0, snap)
+    painter.end()
+    drag.setPixmap(faded)
+    drag.setHotSpot(preview.mapFromGlobal(QCursor.pos()))
+    drag.exec(Qt.DropAction.MoveAction)
+
+
+class DropLine(QWidget):
+    """Thin accent line showing where a dragged item will land."""
+
+    def __init__(self, parent: QWidget, vertical: bool) -> None:
+        super().__init__(parent)
+        self.vertical = vertical
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self.hide()
+
+    def show_at(self, pos: int, start: int, length: int) -> None:
+        if self.vertical:
+            self.setGeometry(pos - 1, start, 3, length)
+        else:
+            self.setGeometry(start, pos - 1, length, 3)
+        self.show()
+        self.raise_()
+
+    def paintEvent(self, e) -> None:
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        p.fillPath(rounded(QRectF(self.rect()), 1.5), QColor(theme.ACCENT))
+        p.end()
+
+
+class ProfileChip(QPushButton):
+    """A profile button that can also be dragged to reorder."""
+
+    def __init__(self, text: str, uid: str) -> None:
+        super().__init__(text)
+        self.uid = uid
+        self._press: QPoint | None = None
+
+    def mousePressEvent(self, e) -> None:
+        if e.button() == Qt.MouseButton.LeftButton:
+            self._press = e.position().toPoint()
+        super().mousePressEvent(e)
+
+    def mouseMoveEvent(self, e) -> None:
+        moved = self._press is not None and \
+            (e.position().toPoint() - self._press).manhattanLength() >= QApplication.startDragDistance()
+        if moved:
+            self._press = None
+            self.setDown(False)
+            start_drag(self, PROFILE_MIME, self.uid, self)
+            return
+        super().mouseMoveEvent(e)
+
+    def mouseReleaseEvent(self, e) -> None:
+        self._press = None
+        super().mouseReleaseEvent(e)
+
+
 class ProfileBar(QWidget):
-    """Profile chips: click to switch, + to add, right-click / ⋯ to manage."""
+    """Profile chips: click to switch, drag to reorder, + to add, right-click / ⋯ to manage."""
 
     def __init__(self, store: Store, manager) -> None:
         super().__init__()
         self.store, self.manager = store, manager
+        self.chips: list[ProfileChip] = []
+        self.setAcceptDrops(True)
+        self.line = DropLine(self, vertical=True)
         self.lay = QHBoxLayout(self)
         self.lay.setContentsMargins(0, 0, 0, 0)
         self.lay.setSpacing(8)
@@ -714,35 +920,69 @@ class ProfileBar(QWidget):
             item = self.lay.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
-        label = QLabel("Profil")
+        label = QLabel(tr("Profil"))
         label.setObjectName("Muted")
         self.lay.addWidget(label)
         self.lay.addSpacing(4)
+        self.chips = []
         for pr in self.store.profiles:
-            chip = QPushButton(pr.name)
+            chip = ProfileChip(pr.name, pr.uid)
+            self.chips.append(chip)
             chip.setObjectName("Chip")
             chip.setCheckable(True)
             chip.setChecked(pr.uid == self.store.active_uid)
             chip.setCursor(Qt.CursorShape.PointingHandCursor)
-            chip.setToolTip(f"{len(pr.overlays)} Overlay{'' if len(pr.overlays) == 1 else 's'}  ·  Rechtsklick für Optionen")
+            chip.setToolTip(tr("{a0} Overlay{a1}  ·  Rechtsklick für Optionen", a0=len(pr.overlays), a1='' if len(pr.overlays) == 1 else 's')
+                            + "  ·  " + tr("Ziehen zum Sortieren"))
             chip.clicked.connect(lambda _=False, uid=pr.uid: self.manager.switch_profile(uid))
             chip.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
             chip.customContextMenuRequested.connect(lambda pos, pr=pr, c=chip: self.menu(pr, c.mapToGlobal(pos)))
             self.lay.addWidget(chip)
-        add = IconButton(theme.Icon.ADD, "Neues Profil", size=32)
+        add = IconButton(theme.Icon.ADD, tr("Neues Profil"), size=32)
         add.clicked.connect(self.add_profile)
         self.lay.addWidget(add)
         self.lay.addStretch()
-        hint = QLabel(f"{self.store.hotkey_text('prev')}  /  {self.store.hotkey_text('next')} zum Wechseln")
+        hint = QLabel(tr("{a0}  /  {a1} zum Wechseln", a0=self.store.hotkey_text('prev'), a1=self.store.hotkey_text('next')))
         hint.setObjectName("Dim")
         self.lay.addWidget(hint)
-        more = IconButton(theme.Icon.MORE, "Profil verwalten", size=32)
+        more = IconButton(theme.Icon.MORE, tr("Profil verwalten"), size=32)
         more.clicked.connect(lambda: self.menu(self.store.profile, more.mapToGlobal(QPoint(0, more.height() + 4))))
         self.lay.addWidget(more)
 
+    # -- drag & drop reordering ---------------------------------------------------------
+    def _slot(self, x: int) -> tuple[int, int]:
+        for i, chip in enumerate(self.chips):
+            g = chip.geometry()
+            if x < g.center().x():
+                return i, g.left() - 4
+        last = self.chips[-1].geometry()
+        return len(self.chips), last.right() + 5
+
+    def dragEnterEvent(self, e) -> None:
+        if e.mimeData().hasFormat(PROFILE_MIME):
+            e.acceptProposedAction()
+
+    def dragMoveEvent(self, e) -> None:
+        if e.mimeData().hasFormat(PROFILE_MIME) and self.chips:
+            _, x = self._slot(e.position().toPoint().x())
+            g = self.chips[0].geometry()
+            self.line.show_at(x, g.top() + 2, g.height() - 4)
+            e.acceptProposedAction()
+
+    def dragLeaveEvent(self, e) -> None:
+        self.line.hide()
+
+    def dropEvent(self, e) -> None:
+        self.line.hide()
+        if e.mimeData().hasFormat(PROFILE_MIME) and self.chips:
+            uid = bytes(e.mimeData().data(PROFILE_MIME)).decode()
+            index, _ = self._slot(e.position().toPoint().x())
+            self.store.move_profile(uid, index)
+            e.acceptProposedAction()
+
     def add_profile(self) -> None:
-        name = ConfirmDialog.ask_text(self.window(), "Neues Profil", self.store.unique_name("Profil"), "Anlegen",
-                                      "Ein neues, leeres Profil. Die Bibliothek teilen sich alle Profile.")
+        name = ConfirmDialog.ask_text(self.window(), tr("Neues Profil"), self.store.unique_name(tr("Profil")), tr("Anlegen"),
+                                      tr("Ein neues, leeres Profil. Die Bibliothek teilen sich alle Profile."))
         if name:
             pr = self.store.add_profile(name)
             self.manager.switch_profile(pr.uid)
@@ -750,28 +990,27 @@ class ProfileBar(QWidget):
     def menu(self, pr, pos: QPoint) -> None:
         menu = QMenu(self)
         if pr.uid != self.store.active_uid:
-            menu.addAction("Aktivieren", lambda: self.manager.switch_profile(pr.uid))
-        menu.addAction("Umbenennen …", lambda: self.rename(pr))
-        menu.addAction("Duplizieren", lambda: self.duplicate(pr))
+            menu.addAction(tr("Aktivieren"), lambda: self.manager.switch_profile(pr.uid))
+        menu.addAction(tr("Umbenennen …"), lambda: self.rename(pr))
+        menu.addAction(tr("Duplizieren"), lambda: self.duplicate(pr))
         menu.addSeparator()
-        delete = menu.addAction("Löschen …", lambda: self.delete(pr))
+        delete = menu.addAction(tr("Löschen …"), lambda: self.delete(pr))
         delete.setEnabled(len(self.store.profiles) > 1)
         menu.exec(pos)
 
     def rename(self, pr) -> None:
-        name = ConfirmDialog.ask_text(self.window(), "Profil umbenennen", pr.name)
+        name = ConfirmDialog.ask_text(self.window(), tr("Profil umbenennen"), pr.name)
         if name:
             self.store.rename_profile(pr, name)
 
     def duplicate(self, pr) -> None:
-        copy = self.store.add_profile(f"{pr.name} Kopie", copy_from=pr)
+        copy = self.store.add_profile(tr("{a0} Kopie", a0=pr.name), copy_from=pr)
         self.manager.switch_profile(copy.uid)
 
     def delete(self, pr) -> None:
         n = len(pr.overlays)
-        if ConfirmDialog.ask(self.window(), f"Profil „{pr.name}“ löschen?",
-                             f"Die Anordnung mit {n} Overlay{'' if n == 1 else 's'} geht verloren. "
-                             "Die Bilder selbst bleiben in deiner Bibliothek.", "Profil löschen"):
+        if ConfirmDialog.ask(self.window(), tr("Profil „{a0}“ löschen?", a0=pr.name),
+                             tr("Die Anordnung mit {a0} Overlay{a1} geht verloren. Die Bilder selbst bleiben in deiner Bibliothek.", a0=n, a1='' if n == 1 else 's'), tr("Profil löschen")):
             self.manager.delete_profile(pr)
 
 
@@ -785,12 +1024,12 @@ class ActivePage(QWidget):
         root.setSpacing(18)
 
         top = QHBoxLayout()
-        header, self.subtitle = page_header("Auf dem Bildschirm")
+        header, self.subtitle = page_header(tr("Auf dem Bildschirm"))
         top.addWidget(header)
         top.addStretch()
         self.hide_btn = QPushButton()
         self.hide_btn.clicked.connect(lambda: manager.set_all_hidden(not manager.all_hidden))
-        clear = QPushButton("Alle entfernen")
+        clear = QPushButton(tr("Alle entfernen"))
         clear.setObjectName("Danger")
         clear.clicked.connect(self._remove_all)
         top.addWidget(self.hide_btn, 0, Qt.AlignmentFlag.AlignBottom)
@@ -806,11 +1045,16 @@ class ActivePage(QWidget):
         store.hotkeys_changed.connect(self._update_tips)
 
         content = QWidget()
+        self.content = content
+        self.rows: dict[str, OverlayRow] = {}
+        self.line = DropLine(content, vertical=False)
+        content.setAcceptDrops(True)
+        content.installEventFilter(self)
         self.list = QVBoxLayout(content)
         self.list.setContentsMargins(0, 0, 8, 24)
         self.list.setSpacing(10)
-        self.empty = EmptyState(theme.Icon.LAYERS, "Nichts platziert",
-                                "Wähle etwas aus deiner Bibliothek oder dem Workshop, um es auf den Bildschirm zu legen.")
+        self.empty = EmptyState(theme.Icon.LAYERS, tr("Nichts platziert"),
+                                tr("Wähle etwas aus deiner Bibliothek oder dem Workshop, um es auf den Bildschirm zu legen."))
         root.addWidget(scroll_wrap(content), 1)
         self.rows: dict[str, OverlayRow] = {}
         store.overlays_changed.connect(self.rebuild)
@@ -834,29 +1078,64 @@ class ActivePage(QWidget):
         self.empty.setVisible(not shown)
         self.list.addStretch()
         n, hidden = len(shown), len(self.store.overlays) - len(shown)
-        text = f"{n} aktive{'s' if n == 1 else ''} Overlay{'' if n == 1 else 's'}  ·  Profil „{self.store.profile.name}“"
-        self.subtitle.setText(text + (f"  ·  {hidden} NSFW ausgeblendet" if hidden else ""))
+        text = tr("{a0} aktive{a1} Overlay{a2}  ·  Profil „{a3}“", a0=n, a1='s' if n == 1 else '', a2='' if n == 1 else 's', a3=self.store.profile.name)
+        self.subtitle.setText(text + ("  ·  " + tr("{a0} NSFW ausgeblendet", a0=hidden) if hidden else ""))
         self._refresh_rows()
+
+    # -- drag & drop reordering ---------------------------------------------------------
+    def _slot(self, y: int) -> tuple[int, int]:
+        rows = list(self.rows.values())
+        for i, row in enumerate(rows):
+            g = row.geometry()
+            if y < g.center().y():
+                return i, g.top() - 5
+        return len(rows), rows[-1].geometry().bottom() + 6
+
+    def eventFilter(self, obj, e) -> bool:
+        if obj is getattr(self, "content", None) and getattr(self, "rows", None):
+            t = e.type()
+            if t in (QEvent.Type.DragEnter, QEvent.Type.DragMove) and e.mimeData().hasFormat(OVERLAY_MIME):
+                _, y = self._slot(e.position().toPoint().y())
+                first = next(iter(self.rows.values())).geometry()
+                self.line.show_at(y, first.left() + 12, first.width() - 24)
+                e.acceptProposedAction()
+                return True
+            if t == QEvent.Type.DragLeave:
+                self.line.hide()
+                return True
+            if t == QEvent.Type.Drop and e.mimeData().hasFormat(OVERLAY_MIME):
+                self.line.hide()
+                uid = bytes(e.mimeData().data(OVERLAY_MIME)).decode()
+                index, _ = self._slot(e.position().toPoint().y())
+                shown = list(self.rows)
+                # the list may hide NSFW overlays: map the visible position to the full profile list
+                overlays = self.store.overlays
+                if index >= len(shown):
+                    target = len(overlays)
+                else:
+                    target = next(i for i, o in enumerate(overlays) if o.uid == shown[index])
+                self.store.move_overlay(uid, target)
+                e.acceptProposedAction()
+                return True
+        return super().eventFilter(obj, e)
 
     def _update_tips(self) -> None:
         b = f'<b style="color:{theme.TEXT}">'
         self.tips.setText(
-            f'<span style="color:{theme.MUTED}">Im {b}Bearbeiten-Modus</b> kannst du Overlays ziehen, an den Ecken '
-            f'skalieren oder mit dem {b}Mausrad</b> zoomen. Rechtsklick öffnet mehr Optionen. Danach mit '
-            f'{b}{self.store.hotkey_text("edit")}</b> fixieren: Dann lassen sich die Overlays durchklicken.</span>')
+            tr("<span style=\"color:{a0}\">Im {a1}Bearbeiten-Modus</b> kannst du Overlays ziehen, an den Ecken skalieren oder mit dem {a2}Mausrad</b> zoomen. Rechtsklick öffnet mehr Optionen. Danach mit {a3}{a4}</b> fixieren: Dann lassen sich die Overlays durchklicken.</span>", a0=theme.MUTED, a1=b, a2=b, a3=b, a4=self.store.hotkey_text("edit")))
 
     def _remove_all(self) -> None:
         n = len(self.manager.shown_states())
-        if n and ConfirmDialog.ask(self.window(), f"Alle {n} Overlays entfernen?",
-                                   "Sie verschwinden vom Bildschirm. Die Bilder bleiben in deiner Bibliothek.",
-                                   "Alle entfernen"):
+        if n and ConfirmDialog.ask(self.window(), tr("Alle {a0} Overlays entfernen?", a0=n),
+                                   tr("Sie verschwinden vom Bildschirm. Die Bilder bleiben in deiner Bibliothek."),
+                                   tr("Alle entfernen")):
             for s in self.manager.shown_states():
                 self.manager.remove(s)
 
     def _refresh_rows(self, *_) -> None:
         for row in self.rows.values():
             row.refresh()
-        self.hide_btn.setText("Alle einblenden" if self.manager.all_hidden else "Alle ausblenden")
+        self.hide_btn.setText(tr("Alle einblenden") if self.manager.all_hidden else tr("Alle ausblenden"))
 
 
 # ======================================================================================
@@ -952,10 +1231,10 @@ class HotkeyControl(QWidget):
         self.button = QPushButton()
         self.button.setMinimumWidth(170)
         self.button.setCursor(Qt.CursorShape.PointingHandCursor)
-        self.button.setToolTip("Klicken und neue Tastenkombination drücken")
+        self.button.setToolTip(tr("Klicken und neue Tastenkombination drücken"))
         self.button.clicked.connect(self.start)
         self.button.installEventFilter(self)
-        self.reset = IconButton(theme.Icon.REFRESH, "Auf Standard zurücksetzen", size=32)
+        self.reset = IconButton(theme.Icon.REFRESH, tr("Auf Standard zurücksetzen"), size=32)
         self.reset.clicked.connect(lambda: self._apply(None))
         lay.addWidget(self.button)
         lay.addWidget(self.reset)
@@ -974,7 +1253,7 @@ class HotkeyControl(QWidget):
             return
         self.recording = True
         self.window().unregister_hotkeys()   # otherwise the current combo never reaches us
-        self.button.setText("Tasten drücken …")
+        self.button.setText(tr("Tasten drücken …"))
         self.button.setStyleSheet(f"border-color:{theme.ACCENT}; color:{theme.TEXT};")
         self.button.setFocus()
         self.button.grabKeyboard()
@@ -1003,7 +1282,7 @@ class HotkeyControl(QWidget):
                     self._apply(combo)
                 else:
                     held = [hotkeys.MOD_TEXT[m] for m in hotkeys.modifiers_text(event.modifiers())]
-                    self.button.setText(" + ".join(held + ["…"]) if held else "Tasten drücken …")
+                    self.button.setText(" + ".join(held + ["…"]) if held else tr("Tasten drücken …"))
                 return True
             if event.type() == QEvent.Type.FocusOut:
                 self.stop()
@@ -1011,10 +1290,10 @@ class HotkeyControl(QWidget):
         return super().eventFilter(obj, event)
 
 
-CLOSE_MODES = {"auto": "Automatisch", "tray": "Immer in den Tray", "quit": "Immer beenden"}
+CLOSE_MODES = {"auto": tr("Automatisch"), "tray": tr("Immer in den Tray"), "quit": tr("Immer beenden")}
 
-AUTO_DELETE = [(0, "Nie"), (7, "Nach 7 Tagen"), (14, "Nach 14 Tagen"), (30, "Nach 30 Tagen"),
-               (60, "Nach 60 Tagen"), (90, "Nach 90 Tagen")]
+AUTO_DELETE = [(0, tr("Nie")), (7, tr("Nach 7 Tagen")), (14, tr("Nach 14 Tagen")), (30, tr("Nach 30 Tagen")),
+               (60, tr("Nach 60 Tagen")), (90, tr("Nach 90 Tagen"))]
 
 
 class SettingsPage(QWidget):
@@ -1025,7 +1304,7 @@ class SettingsPage(QWidget):
         root = QVBoxLayout(self)
         root.setContentsMargins(36, 8, 28, 0)
         root.setSpacing(18)
-        header, _ = page_header("Einstellungen", "Miso so, wie du es willst")
+        header, _ = page_header(tr("Einstellungen"), tr("Miso so, wie du es willst"))
         root.addWidget(header)
 
         content = QWidget()
@@ -1052,15 +1331,14 @@ class SettingsPage(QWidget):
                 lay.addSpacing(12)
             lay.addWidget(label)
 
-        section("Inhalt", first=True)
+        section(tr("Inhalt"), first=True)
         nsfw = ToggleSwitch(checked=s.hide_nsfw)
         nsfw.toggled.connect(store.set_hide_nsfw)
-        lay.addWidget(SettingRow(theme.Icon.SHIELD, "NSFW ausblenden",
-                                 "Blendet alles mit 18+, NSFW, hentai usw. im Titel aus: im Workshop, in der "
-                                 "Bibliothek und auf dem Bildschirm. Gelöscht wird dabei nichts.", nsfw))
+        lay.addWidget(SettingRow(theme.Icon.SHIELD, tr("NSFW ausblenden"),
+                                 tr("Blendet alles mit 18+, NSFW, hentai usw. im Titel aus: im Workshop, in der Bibliothek und auf dem Bildschirm. Gelöscht wird dabei nichts."), nsfw))
 
         # -- storage --------------------------------------------------------------
-        section("Speicher")
+        section(tr("Speicher"))
         card = QFrame()
         card.setObjectName("Setting")
         card.setStyleSheet(f"QFrame#Setting {{ background:{theme.SURFACE}; border:1px solid {theme.BORDER};"
@@ -1074,9 +1352,9 @@ class SettingsPage(QWidget):
         self.storage_total.setMinimumWidth(260)
         head.addWidget(self.storage_total)
         head.addStretch()
-        clear_cache = QPushButton("Cache leeren")
+        clear_cache = QPushButton(tr("Cache leeren"))
         clear_cache.clicked.connect(self._clear_cache)
-        open_dir = QPushButton("Ordner öffnen")
+        open_dir = QPushButton(tr("Ordner öffnen"))
         open_dir.clicked.connect(lambda: (WORKSHOP_DIR.parent.mkdir(parents=True, exist_ok=True),
                                           QDesktopServices.openUrl(QUrl.fromLocalFile(str(WORKSHOP_DIR.parent)))))
         head.addWidget(clear_cache)
@@ -1092,18 +1370,40 @@ class SettingsPage(QWidget):
         self.auto_combo.setCurrentIndex(next((i for i, (d, _) in enumerate(AUTO_DELETE) if d == s.auto_delete_days), 0))
         self.auto_combo.currentIndexChanged.connect(self._auto_delete_changed)
         self.auto_combo.setMinimumWidth(160)
-        lay.addWidget(SettingRow(theme.Icon.CLOCK, "Ungenutztes automatisch löschen",
-                                 "Elemente, die so lange nicht auf dem Bildschirm waren, werden gelöscht. "
-                                 "Favoriten und Overlays, die gerade laufen, bleiben immer. Du wirst vorher gefragt.",
+        lay.addWidget(SettingRow(theme.Icon.CLOCK, tr("Ungenutztes automatisch löschen"),
+                                 tr("Elemente, die so lange nicht auf dem Bildschirm waren, werden gelöscht. Favoriten und Overlays, die gerade laufen, bleiben immer. Du wirst vorher gefragt."),
                                  self.auto_combo))
-        unused_btn = QPushButton("Jetzt aufräumen …")
+        unused_btn = QPushButton(tr("Jetzt aufräumen …"))
         unused_btn.setObjectName("Danger")
         unused_btn.clicked.connect(lambda: self.window().delete_unused())
-        lay.addWidget(SettingRow(theme.Icon.DELETE, "Alle ungenutzten löschen",
-                                 "Löscht alles aus der Bibliothek, was gerade nicht auf dem Bildschirm ist "
-                                 "und kein Favorit ist.", unused_btn))
+        lay.addWidget(SettingRow(theme.Icon.DELETE, tr("Alle ungenutzten löschen"),
+                                 tr("Löscht alles aus der Bibliothek, was gerade nicht auf dem Bildschirm ist und kein Favorit ist."), unused_btn))
 
-        section("Allgemein")
+        section(tr("Allgemein"))
+        lang_combo = QComboBox()
+        for code, name in i18n.LANGUAGES.items():
+            lang_combo.addItem(name, code)
+        lang_combo.setCurrentIndex(list(i18n.LANGUAGES).index(i18n.LANG))
+        lang_combo.setMinimumWidth(190)
+
+        def lang_changed(index: int) -> None:
+            code = lang_combo.itemData(index)
+            if code == i18n.LANG:
+                return
+            if ConfirmDialog.ask(self.window(), tr("Sprache ändern?"),
+                                 tr("Miso startet dafür kurz neu. Deine Overlays bleiben, wo sie sind."),
+                                 tr("Neu starten"), danger=False):
+                s.language = code
+                store.save_now()
+                self.window().restart()
+            else:
+                lang_combo.blockSignals(True)
+                lang_combo.setCurrentIndex(list(i18n.LANGUAGES).index(i18n.LANG))
+                lang_combo.blockSignals(False)
+        lang_combo.currentIndexChanged.connect(lang_changed)
+        lay.addWidget(SettingRow(theme.Icon.GLOBE, tr("Sprache"),
+                                 tr("Sprache der Oberfläche. Wird nach einem Neustart von Miso übernommen."),
+                                 lang_combo))
         close_combo = QComboBox()
         for key, label in CLOSE_MODES.items():
             close_combo.addItem(label, key)
@@ -1114,63 +1414,66 @@ class SettingsPage(QWidget):
             s.close_mode = close_combo.itemData(i)
             store.save()
         close_combo.currentIndexChanged.connect(close_changed)
-        lay.addWidget(SettingRow(theme.Icon.MIN, "Beim Schließen des Fensters",
-                                 "Automatisch: Solange Overlays auf dem Bildschirm sind, läuft Miso im Infobereich "
-                                 "(Tray) weiter. Ohne Overlays wird Miso einfach beendet.", close_combo))
+        lay.addWidget(SettingRow(theme.Icon.MIN, tr("Beim Schließen des Fensters"),
+                                 tr("Automatisch: Solange Overlays auf dem Bildschirm sind, läuft Miso im Infobereich (Tray) weiter. Ohne Overlays wird Miso einfach beendet."), close_combo))
         def set_animations(on: bool) -> None:
             theme.ANIMATIONS = on and theme.system_animations_enabled()
-        lay.addWidget(SettingRow(theme.Icon.SPARKLE, "Animationen",
-                                 "Weiche Übergänge, Einblendungen und Bewegungen. Sind Animationen in Windows "
-                                 "ausgeschaltet, bleibt Miso ebenfalls ruhig.", toggle("animations", set_animations)))
-        lay.addWidget(SettingRow(theme.Icon.SPARKLE, "Mit Windows starten",
-                                 "Overlays sind direkt nach dem Hochfahren wieder da.",
+        lay.addWidget(SettingRow(theme.Icon.SPARKLE, tr("Animationen"),
+                                 tr("Weiche Übergänge, Einblendungen und Bewegungen. Sind Animationen in Windows ausgeschaltet, bleibt Miso ebenfalls ruhig."), toggle("animations", set_animations)))
+        lay.addWidget(SettingRow(theme.Icon.SPARKLE, tr("Mit Windows starten"),
+                                 tr("Overlays sind direkt nach dem Hochfahren wieder da."),
                                  toggle("autostart", on_autostart)))
-        lay.addWidget(SettingRow(theme.Icon.EYE_OFF, "Unsichtbar starten",
-                                 "Beim Start nur die Overlays zeigen, nicht dieses Fenster.",
+        lay.addWidget(SettingRow(theme.Icon.EYE_OFF, tr("Unsichtbar starten"),
+                                 tr("Beim Start nur die Overlays zeigen, nicht dieses Fenster."),
                                  toggle("start_hidden")))
 
-        section("Updates")
-        check_btn = QPushButton("Nach Updates suchen")
+        section(tr("Updates"))
+        check_btn = QPushButton(tr("Nach Updates suchen"))
         check_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         check_btn.clicked.connect(lambda: self.window().check_updates(manual=True))
         lay.addWidget(SettingRow(theme.Icon.REFRESH, f"Miso {__version__}",
-                                 "Neue Versionen kommen direkt von GitHub. Das Setup wird vor der Installation "
-                                 "auf Vollständigkeit und Prüfsumme kontrolliert.", check_btn))
-        lay.addWidget(SettingRow(theme.Icon.GLOBE, "Automatisch nach Updates suchen",
-                                 "Beim Start und alle 12 Stunden. Du wirst gefragt, bevor etwas installiert wird.",
+                                 tr("Neue Versionen kommen direkt von GitHub. Das Setup wird vor der Installation auf Vollständigkeit und Prüfsumme kontrolliert."), check_btn))
+        lay.addWidget(SettingRow(theme.Icon.GLOBE, tr("Automatisch nach Updates suchen"),
+                                 tr("Beim Start und alle 12 Stunden. Du wirst gefragt, bevor etwas installiert wird."),
                                  toggle("update_check")))
-        lay.addWidget(SettingRow(theme.Icon.DOWNLOAD, "Updates ohne Nachfrage installieren",
-                                 "Lädt neue Versionen automatisch und startet Miso danach neu "
-                                 "(nur bei installiertem Miso, nicht bei der portablen Version).",
+        lay.addWidget(SettingRow(theme.Icon.DOWNLOAD, tr("Updates ohne Nachfrage installieren"),
+                                 tr("Lädt neue Versionen automatisch und startet Miso danach neu (nur bei installiertem Miso, nicht bei der portablen Version)."),
                                  toggle("update_auto_install")))
 
-        section("Tastenkürzel")
-        hint = QLabel("Klick auf ein Kürzel und drück die neue Tastenkombination (mit Strg, Alt, Umschalt oder Win). "
-                      "Esc bricht ab. Die Kürzel funktionieren überall, auch wenn Miso im Tray ist.")
+        section(tr("Tastenkürzel"))
+        hint = QLabel(tr("Klick auf ein Kürzel und drück die neue Tastenkombination (mit Strg, Alt, Umschalt oder Win). Esc bricht ab. Die Kürzel funktionieren überall, auch wenn Miso im Tray ist."))
         hint.setObjectName("Muted")
         hint.setWordWrap(True)
         lay.addWidget(hint)
         descriptions = {
-            "edit": "Overlays verschieben oder fixieren (durchklickbar).",
-            "hide": "Blendet alle Overlays schnell aus und wieder ein.",
-            "prev": "Zum vorherigen Profil springen.",
-            "next": "Zum nächsten Profil springen.",
+            "edit": tr("Overlays verschieben oder fixieren (durchklickbar)."),
+            "hide": tr("Blendet alle Overlays schnell aus und wieder ein."),
+            "prev": tr("Zum vorherigen Profil springen."),
+            "next": tr("Zum nächsten Profil springen."),
         }
         for action, text in descriptions.items():
             lay.addWidget(SettingRow(theme.Icon.KEYBOARD, hotkeys.ACTIONS[action][1], text,
                                      HotkeyControl(store, action)))
-        chip = QLabel("Strg + V")
+        chip = QLabel(tr("Strg + V"))
         chip.setStyleSheet(f"background:{theme.SURFACE_3}; border:1px solid {theme.BORDER}; border-radius:8px;"
                            f" padding:5px 10px; font-weight:600;")
-        lay.addWidget(SettingRow(theme.Icon.KEYBOARD, "Bild einfügen",
-                                 "Kopiertes Bild, GIF oder Bild-Link direkt in die Bibliothek (im Miso-Fenster).", chip))
+        lay.addWidget(SettingRow(theme.Icon.KEYBOARD, tr("Bild einfügen"),
+                                 tr("Kopiertes Bild, GIF oder Bild-Link direkt in die Bibliothek (im Miso-Fenster)."), chip))
+
+        section(tr("Spiele"))
+        good = QLabel(tr("Gut"))
+        good.setStyleSheet(f"color:{theme.SUCCESS}; font-weight:600;")
+        lay.addWidget(SettingRow(theme.Icon.SPARKLE, tr("Vollbild-Spiele"),
+                                 tr("Overlays bleiben über Spielen im Modus „Vollbild (Fenster)“ bzw. „Rahmenlos“. "
+                                    "Wechselt ein Spiel die Auflösung, bleiben sie an derselben Stelle. Bei "
+                                    "exklusivem Vollbild kann Windows keine fremden Fenster darüber zeigen; Miso "
+                                    "greift absichtlich nicht ins Spiel ein (kein Anti-Cheat-Risiko)."), good))
 
         section("Steam Workshop")
-        info = QLabel("Direkt")
+        info = QLabel(tr("Direkt"))
         info.setStyleSheet(f"color:{theme.SUCCESS}; font-weight:600;")
-        lay.addWidget(SettingRow(theme.Icon.GLOBE, "Steam-Verbindung",
-                                 "Miso lädt Workshop-Items selbst über das Steam-Netzwerk (anonymer Login, "
-                                 "Steam CDN). Kein Steam, kein SteamCMD nötig.", info))
+        lay.addWidget(SettingRow(theme.Icon.GLOBE, tr("Steam-Verbindung"),
+                                 tr("Miso lädt Workshop-Items selbst über das Steam-Netzwerk (anonymer Login, Steam CDN). Kein Steam, kein SteamCMD nötig."), info))
         lay.addStretch()
         root.addWidget(scroll_wrap(content), 1)
         store.library_changed.connect(self.refresh_storage)
@@ -1182,31 +1485,29 @@ class SettingsPage(QWidget):
     def refresh_storage(self) -> None:
         if not self.isVisible():
             return
-        parts = [("Workshop", dir_size(WORKSHOP_DIR)), ("Eigene Bilder", dir_size(UPLOAD_DIR)),
-                 ("Cache", dir_size(CACHE_DIR))]
+        parts = [("Workshop", dir_size(WORKSHOP_DIR)), (tr("Eigene Bilder"), dir_size(UPLOAD_DIR)),
+                 (tr("Cache"), dir_size(CACHE_DIR))]
         used = sum(v for _, v in parts)
-        self.storage_total.setText(f"{human_size(used) if used else '0 KB'} belegt")
+        self.storage_total.setText(tr("{a0} belegt", a0=human_size(used) if used else '0 KB'))
         self.storage_bar.set_parts(parts)
 
     def _clear_cache(self) -> None:
         size = dir_size(CACHE_DIR)
-        if not ConfirmDialog.ask(self.window(), "Cache leeren?",
-                                 f"Löscht zwischengespeicherte Vorschaubilder ({human_size(size) if size else '0 KB'}). "
-                                 "Deine Bibliothek bleibt unberührt, Vorschauen werden bei Bedarf neu geladen.",
-                                 "Cache leeren"):
+        if not ConfirmDialog.ask(self.window(), tr("Cache leeren?"),
+                                 tr("Löscht zwischengespeicherte Vorschaubilder ({a0}). Deine Bibliothek bleibt unberührt, Vorschauen werden bei Bedarf neu geladen.", a0=human_size(size) if size else '0 KB'),
+                                 tr("Cache leeren")):
             return
         self.window().loader.nam.cache().clear()
         shutil.rmtree(CACHE_DIR / "thumbs", ignore_errors=True)
         self.refresh_storage()
-        self.window().toast(f"Cache geleert · {human_size(size) if size else '0 KB'} frei", "ok")
+        self.window().toast(tr("Cache geleert · {a0} frei", a0=human_size(size) if size else '0 KB'), "ok")
 
     def _auto_delete_changed(self, index: int) -> None:
         days = self.auto_combo.itemData(index)
         if days and not ConfirmDialog.ask(
-                self.window(), f"Automatisch löschen nach {days} Tagen?",
-                f"Elemente, die {days} Tage nicht auf dem Bildschirm waren, werden gelöscht. Favoriten und "
-                "aktive Overlays bleiben immer. Vor jedem Löschen fragt Miso dich noch einmal.",
-                "Aktivieren", danger=False):
+                self.window(), tr("Automatisch löschen nach {a0} Tagen?", a0=days),
+                tr("Elemente, die {a0} Tage nicht auf dem Bildschirm waren, werden gelöscht. Favoriten und aktive Overlays bleiben immer. Vor jedem Löschen fragt Miso dich noch einmal.", a0=days),
+                tr("Aktivieren"), danger=False):
             self.auto_combo.blockSignals(True)
             self.auto_combo.setCurrentIndex(next(i for i, (d, _) in enumerate(AUTO_DELETE)
                                                  if d == self.store.settings.auto_delete_days))

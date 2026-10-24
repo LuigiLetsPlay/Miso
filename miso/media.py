@@ -21,6 +21,21 @@ def is_supported(path: str) -> bool:
     return path.lower().endswith(SUPPORTED)
 
 
+REAL_FORMATS = {"GIF", "PNG", "WEBP", "JPEG", "BMP"}   # APNG reports as PNG
+MAX_SIDE = 16384
+
+
+def is_real_image(path) -> bool:
+    """Check the file *content* (not just the extension) is a sane image. Never executes anything."""
+    if not is_supported(str(path)):
+        return False
+    try:
+        with Image.open(path) as im:
+            return im.format in REAL_FORMATS and 0 < im.width <= MAX_SIDE and 0 < im.height <= MAX_SIDE
+    except Exception:
+        return False
+
+
 @dataclass
 class MediaInfo:
     width: int

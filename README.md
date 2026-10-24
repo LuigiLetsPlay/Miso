@@ -26,7 +26,7 @@ Prefer no installer? Every release also has **`Miso-portable.zip`**: unzip it an
 > Windows SmartScreen may warn you because Miso isn't code-signed.
 > Click "More info" → "Run anyway".
 
-The app itself is currently in German.
+Miso speaks German and English (switch in Settings → General → Language).
 
 ## Features
 
@@ -34,9 +34,12 @@ The app itself is currently in German.
   with the mouse wheel, right-click for opacity, speed and mirroring.
 - **Lock mode**: `Ctrl + Alt + E` makes overlays click-through so they never get in your way.
 - **Profiles**: different overlay layouts (e.g. Gaming, Work, Stream). Switch with
-  `Ctrl + Alt + ← / →` from anywhere.
+  `Ctrl + Alt + ← / →` from anywhere. Drag profiles and overlays to reorder them.
 - **Steam Workshop**: browse the AnimaEngine workshop and download with one click. No Steam
-  client or SteamCMD required.
+  client or SteamCMD required. Multi-image **packs** open in their own view so you can place any
+  image. Only real image files are ever downloaded; scripts or programs inside an item are skipped.
+- **Games**: overlays stay on top of games in borderless / fullscreen-windowed mode and keep their
+  spot when a game changes the resolution. Miso never hooks into games (no anti-cheat risk).
 - **Your own images**: upload files, drag images straight from your browser, or paste with
   `Ctrl + V`.
 - **Library**: favourites, search, filters, sorting by last used.

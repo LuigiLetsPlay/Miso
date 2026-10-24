@@ -21,6 +21,7 @@ from pathlib import Path
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
 
 from . import __version__
+from .i18n import tr
 
 REPO = "LuigiLetsPlay/Miso"
 API = f"https://api.github.com/repos/{REPO}/releases/latest"
@@ -82,18 +83,18 @@ def download(release: Release, progress, cancel: threading.Event) -> Path:
             total = int(r.headers.get("Content-Length") or release.size or 0)
             while chunk := r.read(1 << 16):
                 if cancel.is_set():
-                    raise InterruptedError("Abgebrochen")
+                    raise InterruptedError(tr("Abgebrochen"))
                 f.write(chunk)
                 sha.update(chunk)
                 done += len(chunk)
                 progress(done, total)
         if release.size and done != release.size:
-            raise ValueError("Download unvollständig")
+            raise ValueError(tr("Download unvollständig"))
         if release.sha256 and sha.hexdigest() != release.sha256:
-            raise ValueError("Prüfsumme stimmt nicht, Update wurde verworfen")
+            raise ValueError(tr("Prüfsumme stimmt nicht, Update wurde verworfen"))
         with open(target, "rb") as f:
             if f.read(2) != b"MZ":
-                raise ValueError("Download ist keine Windows-Datei")
+                raise ValueError(tr("Download ist keine Windows-Datei"))
     except BaseException:
         target.unlink(missing_ok=True)
         raise

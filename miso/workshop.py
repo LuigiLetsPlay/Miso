@@ -8,6 +8,7 @@ import shutil
 import threading
 import urllib.parse
 import urllib.request
+from pathlib import Path
 from dataclasses import dataclass
 
 from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
@@ -15,6 +16,7 @@ from PySide6.QtCore import QObject, QRunnable, QThreadPool, Signal
 from . import media
 from .steam.depot import Cancelled, WorkshopDownloader
 from .store import WORKSHOP_DIR, LibraryItem, Store
+from .i18n import tr
 
 APP_ID = 3474900
 BROWSE_URL = "https://steamcommunity.com/workshop/browse/"
@@ -22,10 +24,10 @@ ITEM_URL = "https://steamcommunity.com/sharedfiles/filedetails/?id={}"
 PER_PAGE = 30
 
 SORTS = {
-    "trend": "Im Trend",
-    "totaluniquesubscribers": "Beliebt",
-    "mostrecent": "Neu",
-    "toprated": "Top bewertet",
+    "trend": tr("Im Trend"),
+    "totaluniquesubscribers": tr("Beliebt"),
+    "mostrecent": tr("Neu"),
+    "toprated": tr("Top bewertet"),
 }
 
 
@@ -76,12 +78,12 @@ def browse(sort: str = "trend", search: str = "", page: int = 1) -> BrowsePage:
 
     m = re.search(r'<script type="application/json" id="valve-ssr-data"[^>]*>(.*?)</script>', page_html, re.S)
     if not m:
-        raise RuntimeError("Workshop-Seite hat ein unbekanntes Format")
+        raise RuntimeError(tr("Workshop-Seite hat ein unbekanntes Format"))
     ssr = json.loads(m.group(1))
     queries = json.loads(ssr["renderContext"]["queryData"])["queries"]
     data = next((q["state"]["data"] for q in queries if q["queryKey"][0] == "workshop_browse"), None)
     if not data:
-        raise RuntimeError("Keine Workshop-Daten gefunden")
+        raise RuntimeError(tr("Keine Workshop-Daten gefunden"))
 
     items = []
     for r in data.get("results", []):
@@ -126,7 +128,7 @@ class BrowseJob(QRunnable):
 class _DownloadSignals(QObject):
     progress = Signal(str, int, int)
     status = Signal(str, str)
-    finished = Signal(str, str)
+    finished = Signal(str, str, object)   # id, main file, all image files
     failed = Signal(str, str)
 
 
@@ -155,18 +157,18 @@ class DownloadJob(QRunnable):
                 progress=lambda done, total: self.signals.progress.emit(item.id, done, total),
                 cancel_event=self.cancel,
             )
-            files = dl.download(item.manifest, tmp)
+            dl.download(item.manifest, tmp, accept=media.is_supported)
+            files = scan_pack(tmp)          # content check, removes anything that isn't an image
+            if not files:
+                raise RuntimeError(tr("Item enthält kein Bild/GIF"))
             shutil.rmtree(target, ignore_errors=True)
             tmp.rename(target)
             files = [target / f.relative_to(tmp) for f in files]
-            playable = [f for f in files if media.is_supported(f.name)]
-            if not playable:
-                raise RuntimeError("Item enthält kein Bild/GIF")
-            main = max(playable, key=lambda f: f.stat().st_size)
-            self.signals.finished.emit(item.id, str(main))
+            main = max(files, key=lambda f: f.stat().st_size)
+            self.signals.finished.emit(item.id, str(main), [str(f) for f in files])
         except Cancelled:
             shutil.rmtree(tmp, ignore_errors=True)
-            self.signals.failed.emit(item.id, "Abgebrochen")
+            self.signals.failed.emit(item.id, tr("Abgebrochen"))
         except Exception as e:
             shutil.rmtree(tmp, ignore_errors=True)
             self.signals.failed.emit(item.id, str(e))
@@ -225,17 +227,56 @@ class DownloadManager(QObject):
             self.active[item_id] = (item, ev, frac)
             self.progress.emit(item_id, frac)
 
-    def _on_finished(self, item_id: str, path: str) -> None:
+    def _on_finished(self, item_id: str, path: str, files: list) -> None:
         item, _, _ = self.active.pop(item_id)
         self._signals.pop(item_id, None)
-        lib =self.store.add_library(LibraryItem(path=path, title=item.title, kind="workshop",
-                                                 workshop_id=item.id, preview_url=item.preview_url))
+        lib = self.store.add_library(LibraryItem(path=path, title=item.title, kind="workshop",
+                                                 workshop_id=item.id, preview_url=item.preview_url,
+                                                 files=files if len(files) > 1 else []))
         self.finished.emit(item_id, lib)
 
     def _on_failed(self, item_id: str, message: str) -> None:
         self.active.pop(item_id, None)
         self._signals.pop(item_id, None)
         self.failed.emit(item_id, message)
+
+
+def scan_pack(folder: Path) -> list[Path]:
+    """All real images in a workshop folder (sorted). Anything else in there is deleted:
+    workshop items may only ever contain pictures, never scripts or programs."""
+    folder = Path(folder)
+    root = WORKSHOP_DIR.resolve()
+    owned = root in folder.resolve().parents
+    images = []
+    for f in sorted(folder.rglob("*"), key=lambda p: str(p).lower()):
+        if not f.is_file():
+            continue
+        if media.is_real_image(f):
+            images.append(f)
+        elif owned:
+            try:
+                f.unlink()
+            except OSError:
+                pass
+    return images
+
+
+def migrate_packs(store: Store) -> None:
+    """Older downloads stored only the biggest file; pick up the rest of multi-image items."""
+    changed = False
+    for item in store.library:
+        if item.kind != "workshop" or item.files:
+            continue
+        folder = Path(item.path).parent
+        if folder.parent.resolve() != WORKSHOP_DIR.resolve():
+            continue
+        files = scan_pack(folder)
+        if len(files) > 1:
+            item.files = [str(f) for f in files]
+            changed = True
+    if changed:
+        store.save()
+        store.library_changed.emit()
 
 
 def delete_workshop_files(item: LibraryItem) -> None:

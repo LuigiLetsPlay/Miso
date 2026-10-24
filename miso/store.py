@@ -12,6 +12,7 @@ from PySide6.QtCore import QObject, QTimer, Signal
 
 from . import hotkeys
 from .nsfw import is_nsfw
+from .i18n import tr
 
 APP_NAME = "Miso"
 DATA_DIR = Path(os.environ.get("APPDATA", Path.home())) / APP_NAME
@@ -36,6 +37,15 @@ class LibraryItem:
     added: float = field(default_factory=time.time)
     last_used: float = 0.0         # last time it was on screen (0 = never)
     favorite: bool = False
+    files: list = field(default_factory=list)   # all images of a pack (empty = single image)
+
+    @property
+    def is_pack(self) -> bool:
+        return len(self.files) > 1
+
+    @property
+    def all_paths(self) -> list[str]:
+        return self.files if self.files else [self.path]
 
     @property
     def key(self) -> str:
@@ -51,10 +61,13 @@ class LibraryItem:
         return self.kind in ("workshop", "upload")
 
     def size(self) -> int:
-        try:
-            return os.path.getsize(self.path)
-        except OSError:
-            return 0
+        total = 0
+        for p in self.all_paths:
+            try:
+                total += os.path.getsize(p)
+            except OSError:
+                pass
+        return total
 
 
 @dataclass
@@ -70,6 +83,13 @@ class OverlayState:
     flip: bool = False
     visible: bool = True
     uid: str = field(default_factory=lambda: uuid.uuid4().hex[:10])
+    # screen the overlay was placed on, and its size back then. When a game switches the
+    # resolution, x/y/w/h are scaled from this reference so the overlay keeps its spot.
+    screen: str = ""
+    sx: int = 0
+    sy: int = 0
+    sw: int = 0
+    sh: int = 0
 
 
 @dataclass
@@ -89,6 +109,7 @@ class Settings:
     hide_nsfw: bool = True         # on by default; turning it off is saved like any setting
     auto_delete_days: int = 0      # 0 = never
     library_sort: str = "recent"   # recent | added | name | size
+    language: str = ""             # "de" / "en"; empty = Windows language
     hotkeys: dict = field(default_factory=dict)   # action -> combo; missing = default
     animations: bool = True
     update_check: bool = True      # look for new GitHub releases
@@ -131,7 +152,7 @@ class Store(QObject):
         super().__init__()
         self.settings = Settings()
         self.library: list[LibraryItem] = []
-        self.profiles: list[Profile] = [Profile("Standard")]
+        self.profiles: list[Profile] = [Profile(tr("Standard"))]
         self.active_uid = self.profiles[0].uid
         self._timer = QTimer(self, singleShot=True, interval=400, timeout=self.save_now)
         self.load()
@@ -144,12 +165,12 @@ class Store(QObject):
         self.settings = _load(Settings, data.get("settings", {}))
         self.library = [_load(LibraryItem, d) for d in data.get("library", [])]
         if data.get("profiles"):
-            self.profiles = [Profile(d.get("name") or "Profil",
+            self.profiles = [Profile(d.get("name") or tr("Profil"),
                                      [_load(OverlayState, o) for o in d.get("overlays", [])],
                                      d.get("uid") or uuid.uuid4().hex[:10])
                              for d in data["profiles"]]
         else:  # configs from before profiles existed
-            self.profiles = [Profile("Standard", [_load(OverlayState, o) for o in data.get("overlays", [])])]
+            self.profiles = [Profile(tr("Standard"), [_load(OverlayState, o) for o in data.get("overlays", [])])]
         uids = [pr.uid for pr in self.profiles]
         self.active_uid = data.get("active_profile") if data.get("active_profile") in uids else uids[0]
         # drop entries whose files were removed behind our back
@@ -199,7 +220,7 @@ class Store(QObject):
         """Mark library entries for `path` as used right now."""
         now = time.time()
         for i in self.library:
-            if i.path == path:
+            if path in i.all_paths:
                 i.last_used = now
         self.save()
 
@@ -227,7 +248,7 @@ class Store(QObject):
         active = {o.path for pr in self.profiles for o in pr.overlays}
         cutoff = time.time() - days * 86400 if days else None
         return [i for i in self.library
-                if not i.favorite and i.path not in active and (cutoff is None or i.used < cutoff)]
+                if not i.favorite and not active.intersection(i.all_paths) and (cutoff is None or i.used < cutoff)]
 
     # -- profiles -----------------------------------------------------------
     @property
@@ -261,7 +282,7 @@ class Store(QObject):
         overlays = []
         if copy_from:
             overlays = [OverlayState(**{**asdict(o), "uid": uuid.uuid4().hex[:10]}) for o in copy_from.overlays]
-        pr = Profile(self.unique_name(name.strip() or "Profil"), overlays)
+        pr = Profile(self.unique_name(name.strip() or tr("Profil")), overlays)
         self.profiles.append(pr)
         self.save()
         self.profiles_changed.emit()
@@ -280,6 +301,32 @@ class Store(QObject):
             self.profiles.remove(pr)
             self.save()
             self.profiles_changed.emit()
+
+    def move_profile(self, uid: str, index: int) -> None:
+        pr = next((p for p in self.profiles if p.uid == uid), None)
+        if pr is None:
+            return
+        old = self.profiles.index(pr)
+        self.profiles.remove(pr)
+        index = max(0, min(index - (1 if index > old else 0), len(self.profiles)))
+        self.profiles.insert(index, pr)
+        if index != old:
+            self.save()
+            self.profiles_changed.emit()
+
+    def move_overlay(self, uid: str, index: int) -> None:
+        """Reorder an overlay within the active profile's list."""
+        overlays = self.overlays
+        state = next((o for o in overlays if o.uid == uid), None)
+        if state is None:
+            return
+        old = overlays.index(state)
+        overlays.remove(state)
+        index = max(0, min(index - (1 if index > old else 0), len(overlays)))
+        overlays.insert(index, state)
+        if index != old:
+            self.save()
+            self.overlays_changed.emit()
 
     def drop_path(self, path: str) -> None:
         """Remove overlays showing `path` from every inactive profile."""

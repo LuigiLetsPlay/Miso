@@ -1,14 +1,24 @@
-; Miso installer (Inno Setup 6) — built by build.ps1
+﻿; Miso installer (Inno Setup 6) — built by build.ps1
 ; Installs per user (no admin prompt) into %LOCALAPPDATA%\Programs\Miso.
 
 #define AppName "Miso"
 #ifndef AppVersion
-  #define AppVersion "1.1.1"
+  #define AppVersion "1.1.2"
 #endif
 #define AppExe "Miso.exe"
+; overridable so test builds never touch a real installation's registration
+#ifndef AppGuid
+  #define AppGuid "6B1E8C2A-5D47-4F0E-9A63-2C7F1D4E8B90"
+#endif
+#ifndef MutexName
+  #define MutexName "MisoAppMutex"
+#endif
+#ifndef OutputName
+  #define OutputName "Miso-Setup"
+#endif
 
 [Setup]
-AppId={{6B1E8C2A-5D47-4F0E-9A63-2C7F1D4E8B90}
+AppId={{{#AppGuid}}
 AppName={#AppName}
 AppVersion={#AppVersion}
 AppVerName={#AppName} {#AppVersion}
@@ -29,7 +39,7 @@ PrivilegesRequiredOverridesAllowed=dialog
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 OutputDir=..\dist
-OutputBaseFilename=Miso-Setup
+OutputBaseFilename={#OutputName}
 SetupIconFile=..\assets\icon.ico
 LicenseFile=..\LICENSE
 UninstallDisplayIcon={app}\{#AppExe}
@@ -39,10 +49,19 @@ WizardSmallImageFile=..\assets\setup-small.bmp,..\assets\setup-small-200.bmp
 Compression=lzma2/ultra64
 SolidCompression=yes
 CloseApplications=yes
+; no language prompt: the setup follows the Windows language, Miso itself switches in its settings
+ShowLanguageDialog=no
+LanguageDetectionMethod=uilanguage
 
 [Languages]
 Name: "german"; MessagesFile: "compiler:Languages\German.isl"
 Name: "english"; MessagesFile: "compiler:Default.isl"
+
+[CustomMessages]
+german.MisoRunning=Miso läuft noch. Bitte schließe Miso (auch im Infobereich) und klicke dann auf OK.
+english.MisoRunning=Miso is still running. Please close Miso (also in the system tray), then click OK.
+german.DeleteData=Sollen auch deine Bibliothek, heruntergeladene Workshop-Items, eigene Bilder und Einstellungen gelöscht werden?%n%nWähle "Nein", wenn du Miso später wieder installieren und alles behalten willst.
+english.DeleteData=Should your library, downloaded workshop items, your own images and settings be deleted as well?%n%nChoose "No" if you want to reinstall Miso later and keep everything.
 
 [Tasks]
 Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; GroupDescription: "{cm:AdditionalIcons}"
@@ -67,7 +86,7 @@ Filename: "{app}\{#AppExe}"; Flags: nowait skipifnotsilent
 
 [Code]
 const
-  MisoMutex = 'MisoAppMutex';
+  MisoMutex = '{#MutexName}';
 
 { Wait for a running Miso to quit (an in-app update closes Miso right after starting
   this setup). If it is still open afterwards, ask the user to close it. }
@@ -88,8 +107,7 @@ begin
       Result := False;
       exit;
     end;
-    if MsgBox('Miso läuft noch. Bitte schließe Miso (auch im Infobereich) und klicke dann auf OK.',
-              mbInformation, MB_OKCANCEL) = IDCANCEL then
+    if MsgBox(CustomMessage('MisoRunning'), mbInformation, MB_OKCANCEL) = IDCANCEL then
     begin
       Result := False;
       exit;
@@ -111,10 +129,7 @@ end;
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);
 begin
   if (CurUninstallStep = usPostUninstall) and not UninstallSilent then
-    if MsgBox('Sollen auch deine Bibliothek, heruntergeladene Workshop-Items, eigene Bilder und ' +
-              'Einstellungen gelöscht werden?' + #13#10#13#10 +
-              'Wähle "Nein", wenn du Miso später wieder installieren und alles behalten willst.',
-              mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES then
+    if MsgBox(CustomMessage('DeleteData'), mbConfirmation, MB_YESNO or MB_DEFBUTTON2) = IDYES then
     begin
       DelTree(ExpandConstant('{userappdata}\Miso'), True, True, True);
       DelTree(ExpandConstant('{localappdata}\Miso'), True, True, True);

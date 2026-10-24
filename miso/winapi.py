@@ -29,6 +29,10 @@ if IS_WIN:
     user32.GetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int]
     user32.SetWindowLongPtrW.restype = ctypes.c_ssize_t
     user32.SetWindowLongPtrW.argtypes = [wintypes.HWND, ctypes.c_int, ctypes.c_ssize_t]
+    user32.SetWindowPos.argtypes = [wintypes.HWND, wintypes.HWND, ctypes.c_int, ctypes.c_int,
+                                    ctypes.c_int, ctypes.c_int, ctypes.c_uint]
+    user32.SetWindowPos.restype = wintypes.BOOL
+    HWND_TOPMOST = wintypes.HWND(-1)  # pointer-sized -1
 
 
 def set_click_through(hwnd: int, enabled: bool) -> None:
@@ -38,6 +42,13 @@ def set_click_through(hwnd: int, enabled: bool) -> None:
     style |= WS_EX_LAYERED
     style = style | WS_EX_TRANSPARENT if enabled else style & ~WS_EX_TRANSPARENT
     user32.SetWindowLongPtrW(hwnd, GWL_EXSTYLE, style)
+
+
+def keep_topmost(hwnd: int) -> None:
+    """Re-assert HWND_TOPMOST without activating, moving or resizing the window."""
+    if IS_WIN:
+        # HWND_TOPMOST = -1; SWP_NOSIZE | SWP_NOMOVE | SWP_NOACTIVATE | SWP_NOOWNERZORDER
+        user32.SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0010 | 0x0200)
 
 
 def style_window(hwnd: int) -> None:

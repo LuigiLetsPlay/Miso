@@ -17,6 +17,7 @@ import urllib.request
 from websockets.sync.client import connect
 
 from .protobuf import Message, Writer
+from ..i18n import tr
 
 PROTO_MASK = 0x80000000
 
@@ -52,7 +53,7 @@ def cm_servers() -> list[str]:
     data = http_json(f"{API}/ISteamDirectory/GetCMListForConnect/v1/?cellid=0&cmtype=websockets")
     servers = [s["endpoint"] for s in data["response"]["serverlist"] if s.get("type") == "websockets"]
     if not servers:
-        raise SteamError("Keine Steam-Server gefunden")
+        raise SteamError(tr("Keine Steam-Server gefunden"))
     return servers
 
 
@@ -72,13 +73,13 @@ class CMClient:
         last_error = None
         for endpoint in cm_servers()[:5]:
             try:
-                self.log(f"Verbinde mit Steam ({endpoint.split(':')[0]}) …")
+                self.log(tr("Verbinde mit Steam ({a0}) …", a0=endpoint.split(':')[0]))
                 self.ws = connect(f"wss://{endpoint}/cmsocket/", open_timeout=10,
                                   max_size=None, user_agent_header=USER_AGENT)
                 return
             except Exception as e:  # try the next server
                 last_error = e
-        raise SteamError(f"Verbindung zu Steam fehlgeschlagen: {last_error}")
+        raise SteamError(tr("Verbindung zu Steam fehlgeschlagen: {a0}", a0=last_error))
 
     def close(self) -> None:
         if self.ws is not None:
@@ -137,14 +138,14 @@ class CMClient:
         while True:
             for i, (emsg, header, body) in enumerate(self._pending):
                 if emsg == CLIENT_LOGGED_OFF:
-                    raise SteamError(f"Von Steam abgemeldet (EResult {Message(body).int(1)})")
+                    raise SteamError(tr("Von Steam abgemeldet (EResult {a0})", a0=Message(body).int(1)))
                 if match(emsg, header):
                     del self._pending[i]
                     return header, body
             self._pending.clear()
             remaining = deadline - time.monotonic()
             if remaining <= 0:
-                raise SteamError("Steam antwortet nicht (Timeout)")
+                raise SteamError(tr("Steam antwortet nicht (Timeout)"))
             self._keepalive()
             try:
                 packet = self.ws.recv(timeout=min(remaining, 2.0))
@@ -168,11 +169,11 @@ class CMClient:
         resp = Message(body)
         result = resp.signed(1, 2)
         if result != 1:
-            raise SteamError(f"Anonymer Login fehlgeschlagen (EResult {result})")
+            raise SteamError(tr("Anonymer Login fehlgeschlagen (EResult {a0})", a0=result))
         self.steamid = header.int(1, self.steamid)
         self.session_id = header.int(2)
         self.heartbeat = float(resp.signed(3, 9) or 9)
-        self.log("Anonym bei Steam angemeldet")
+        self.log(tr("Anonym bei Steam angemeldet"))
 
     def call(self, method: str, body: bytes) -> Message:
         self._job += 1
@@ -181,7 +182,7 @@ class CMClient:
         header, resp = self._wait(lambda e, h: e == SERVICE_METHOD_RESPONSE and h.int(11) == job)
         result = header.signed(13, 2)
         if result != 1:
-            raise SteamError(f"{method} fehlgeschlagen (EResult {result})")
+            raise SteamError(tr("{a0} fehlgeschlagen (EResult {a1})", a0=method, a1=result))
         return Message(resp)
 
     def depot_key(self, app_id: int, depot_id: int) -> bytes:
@@ -191,7 +192,7 @@ class CMClient:
         resp = Message(body)
         result = resp.signed(1, 2)
         if result != 1:
-            raise SteamError(f"Kein Zugriff auf Depot {depot_id} (EResult {result})")
+            raise SteamError(tr("Kein Zugriff auf Depot {a0} (EResult {a1})", a0=depot_id, a1=result))
         return resp.get(3)
 
     def manifest_request_code(self, app_id: int, depot_id: int, manifest_id: int, branch: str = "public") -> int:
