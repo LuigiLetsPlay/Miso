@@ -3,7 +3,7 @@
 
 #define AppName "Miso"
 #ifndef AppVersion
-  #define AppVersion "1.1.2"
+  #define AppVersion "1.1.3"
 #endif
 #define AppExe "Miso.exe"
 ; overridable so test builds never touch a real installation's registration

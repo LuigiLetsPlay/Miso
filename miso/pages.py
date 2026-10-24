@@ -493,7 +493,8 @@ class UploadZone(QWidget):
         p.end()
 
 
-LIB_FILTERS = {"all": tr("Alle"), "fav": tr("Favoriten"), "workshop": "Workshop", "own": tr("Eigene")}
+LIB_FILTERS = {"all": tr("Alle"), "fav": tr("Favoriten"), "workshop": "Workshop", "own": tr("Eigene"),
+               "hidden": tr("Ausgeblendet")}
 LIB_SORTS = {"recent": tr("Zuletzt benutzt"), "added": tr("Neu hinzugefügt"), "name": "Name", "size": tr("Größe")}
 
 
@@ -600,11 +601,15 @@ class LibraryPage(QWidget):
         self.store.save()
         self.rebuild(animate=True)
 
-    def _visible_items(self) -> tuple[list[LibraryItem], int]:
-        items, nsfw = [], 0
+    def _visible_items(self) -> tuple[list[LibraryItem], int, int]:
+        """Items for the current filter, plus how many are NSFW-filtered and user-hidden."""
+        items, nsfw, hidden = [], 0, 0
         for item in self.store.library:
             if self.store.hidden(item.title):
                 nsfw += 1
+                continue
+            hidden += item.hidden
+            if item.hidden != (self.filter == "hidden"):
                 continue
             if self.filter == "fav" and not item.favorite:
                 continue
@@ -620,7 +625,7 @@ class LibraryPage(QWidget):
                 "name": lambda i: i.title.lower(), "size": lambda i: -i.size()}
         items.sort(key=keys.get(sort, keys["recent"]))
         items.sort(key=lambda i: not i.favorite)  # favourites first, stable within
-        return items, nsfw
+        return items, nsfw, hidden
 
     def showEvent(self, e) -> None:
         super().showEvent(e)
@@ -633,7 +638,7 @@ class LibraryPage(QWidget):
         n = 0
         self.grid.clear()
         self.sort_btn.setText(tr("Sortieren: {a0}  ▾", a0=LIB_SORTS.get(self.store.settings.library_sort, '')))
-        items, nsfw = self._visible_items()
+        items, nsfw, hidden = self._visible_items()
         for item in items:
             kind = {"workshop": "Workshop", "upload": tr("Eigenes")}.get(item.kind, tr("Verknüpft"))
             if item.is_pack:
@@ -657,14 +662,19 @@ class LibraryPage(QWidget):
                 card.animate_in(min(n * 30, 450))
                 n += 1
         self.grid.relayout()
-        total = len(self.store.library) - nsfw
+        total = len(self.store.library) - nsfw - hidden
         parts = [f"{total} {tr("Element") if total == 1 else tr("Elemente")}",
                  human_size(sum(i.size() for i in self.store.library if i.deletable))]
+        if hidden:
+            parts.append(tr("{a0} ausgeblendet", a0=hidden))
         if nsfw:
             parts.append(tr("{a0} NSFW ausgeblendet", a0=nsfw))
         self.subtitle.setText("  ·  ".join(parts))
         self.empty.setVisible(not items)
-        if total and not items:
+        if self.filter == "hidden" and not items:
+            self.empty.text.setText(tr("Nichts ausgeblendet. Per Rechtsklick → „Ausblenden“ verschwindet ein "
+                                       "Element hier hin, ohne gelöscht zu werden."))
+        elif (total or hidden) and not items:
             self.empty.text.setText(tr("Keine Treffer für diesen Filter."))
         else:
             self.empty.text.setText(tr("Lade etwas im Workshop herunter oder lade eigene Bilder hoch."))
@@ -676,6 +686,13 @@ class LibraryPage(QWidget):
             item: LibraryItem = card.payload
             count = sum(active.count(p) for p in item.all_paths)
             card.set_state(tr("Platzieren"), theme.Icon.PIN, badge=tr("Aktiv") + (f" ×{count}" if count > 1 else "") if count else "")
+
+    def _set_hidden(self, item: LibraryItem, on: bool) -> None:
+        self.store.set_hidden(item, on)
+        if on:
+            self.window().toast(tr("„{a0}“ ausgeblendet. Unter „Ausgeblendet“ holst du es zurück.", a0=item.title))
+        else:
+            self.window().toast(tr("„{a0}“ wieder eingeblendet", a0=item.title), "ok")
 
     def _open(self, item: LibraryItem) -> None:
         if item.is_pack:
@@ -696,6 +713,10 @@ class LibraryPage(QWidget):
             menu.addAction(tr("Auf dem Bildschirm platzieren"), lambda: self.place_requested.emit(item))
         menu.addAction(tr("Aus Favoriten entfernen") if item.favorite else tr("Favorisieren"),
                        lambda: self.store.set_favorite(item, not item.favorite))
+        if item.hidden:
+            menu.addAction(tr("Wieder einblenden"), lambda: self._set_hidden(item, False))
+        else:
+            menu.addAction(tr("Ausblenden"), lambda: self._set_hidden(item, True))
         if item.kind != "workshop":
             menu.addAction(tr("Umbenennen …"), lambda: self._rename(item))
         menu.addAction(tr("Im Explorer zeigen"), lambda: QDesktopServices.openUrl(

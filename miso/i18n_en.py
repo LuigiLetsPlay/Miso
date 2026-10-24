@@ -362,4 +362,13 @@ EN: dict[str, str] = {
     "Aktiv": "Active",
     "„{a0}“ platziert": "“{a0}” placed",
     "{a0} fehlgeschlagen (EResult {a1})": "{a0} failed (EResult {a1})",
+    "Ausgeblendet": "Hidden",
+    "Ausblenden": "Hide",
+    "Wieder einblenden": "Show again",
+    "{a0} ausgeblendet": "{a0} hidden",
+    "„{a0}“ ausgeblendet. Unter „Ausgeblendet“ holst du es zurück.":
+        "“{a0}” hidden. You'll find it under “Hidden”.",
+    "„{a0}“ wieder eingeblendet": "“{a0}” is visible again",
+    "Nichts ausgeblendet. Per Rechtsklick → „Ausblenden“ verschwindet ein Element hier hin, ohne gelöscht zu werden.":
+        "Nothing hidden. Right-click → “Hide” moves an item here without deleting it.",
 }

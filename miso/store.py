@@ -37,6 +37,7 @@ class LibraryItem:
     added: float = field(default_factory=time.time)
     last_used: float = 0.0         # last time it was on screen (0 = never)
     favorite: bool = False
+    hidden: bool = False           # hidden from the library view by the user (nothing deleted)
     files: list = field(default_factory=list)   # all images of a pack (empty = single image)
 
     @property
@@ -237,6 +238,11 @@ class Store(QObject):
         self.save()
         self.library_changed.emit()
         self.overlays_changed.emit()
+
+    def set_hidden(self, item: LibraryItem, on: bool) -> None:
+        item.hidden = on
+        self.save()
+        self.library_changed.emit()
 
     def set_favorite(self, item: LibraryItem, on: bool) -> None:
         item.favorite = on

@@ -11,6 +11,7 @@ from pathlib import Path
 from PySide6.QtCore import QObject, QProcess, QRectF, Qt, QTimer, QUrl, Signal
 from PySide6.QtGui import (QAction, QColor, QCursor, QDesktopServices, QGuiApplication, QKeySequence, QPainter,
                            QPen, QShortcut)
+import shiboken6
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import (QAbstractButton, QAbstractSlider, QApplication, QHBoxLayout, QLabel,
                                QLineEdit, QMenu, QPushButton, QSystemTrayIcon, QVBoxLayout,
@@ -55,13 +56,16 @@ class OverlayManager(QObject):
     def _watch_screen(self, screen) -> None:
         screen.geometryChanged.connect(lambda *_: self._remap.start())
 
+    def _alive(self) -> list[OverlayWindow]:
+        return [w for w in self.windows.values() if shiboken6.isValid(w)]
+
     def remap(self) -> None:
         """Screen size changed (e.g. a game set another resolution): keep overlays at the same spot."""
-        for win in self.windows.values():
+        for win in self._alive():
             win.place_on_screen()
 
     def keep_on_top(self) -> None:
-        for win in self.windows.values():
+        for win in self._alive():
             win.keep_on_top()
 
     def should_show(self, state: OverlayState) -> bool:
@@ -198,7 +202,7 @@ class OverlayManager(QObject):
 
     def close_all(self, animate: bool = False) -> None:
         for w in self.windows.values():
-            w.fade_out_and_close() if animate else w.close()
+            w.fade_out_and_close() if animate else w.dispose()
         self.windows.clear()
 
 
@@ -742,7 +746,7 @@ class MainWindow(QWidget):
             dlg.cancel_btn.setEnabled(False)
             updater.launch_installer(Path(path))
             self._quitting = True
-            QTimer.singleShot(400, QApplication.instance().quit)
+            QTimer.singleShot(400, request_quit)
 
         def failed(message: str) -> None:
             dlg.reject()
@@ -819,10 +823,19 @@ class MainWindow(QWidget):
                                      theme.app_icon(), 3500)
             return
         e.accept()
-        QApplication.instance().quit()
+        request_quit()
 
 
 # ======================================================================================
+def request_quit() -> None:
+    """Really quit Miso (tray "Quit", updates, restarts, Windows shutdown)."""
+    app = QApplication.instance()
+    for w in app.topLevelWidgets():
+        if isinstance(w, MainWindow):
+            w._quitting = True
+    app.exit(0)
+
+
 def make_tray(app: QApplication, window: MainWindow, manager: OverlayManager) -> QSystemTrayIcon:
     tray = QSystemTrayIcon(theme.app_icon(), app)
     tray.setToolTip(APP_NAME)
@@ -850,10 +863,7 @@ def make_tray(app: QApplication, window: MainWindow, manager: OverlayManager) ->
     menu.addAction(hide)
     menu.addSeparator()
 
-    def quit_app() -> None:
-        window._quitting = True
-        app.quit()
-    menu.addAction(tr("Beenden"), quit_app)
+    menu.addAction(tr("Beenden"), request_quit)
     tray.setContextMenu(menu)
     tray.activated.connect(lambda reason: window.bring_to_front()
                            if reason in (QSystemTrayIcon.ActivationReason.Trigger,
@@ -890,10 +900,7 @@ def restart_app() -> None:
         args = [str(Path(sys.argv[0]).resolve())] + args
     args.append(f"--restart-from={os.getpid()}")
     QProcess.startDetached(sys.executable, args)
-    win = next((w for w in app.topLevelWidgets() if isinstance(w, MainWindow)), None)
-    if win:
-        win._quitting = True
-    app.quit()
+    request_quit()
 
 
 def main() -> int:
@@ -918,6 +925,8 @@ def main() -> int:
     server = QLocalServer()
     server.listen(SINGLETON)
     app.single_instance = server
+    # Windows log-off / shutdown: don't let the "keep running in the tray" logic block it
+    app.commitDataRequest.connect(lambda *_: request_quit())
 
     theme.setup_fonts()
     app.setStyleSheet(theme.STYLESHEET)

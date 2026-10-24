@@ -42,7 +42,8 @@ Miso speaks German and English (switch in Settings → General → Language).
   spot when a game changes the resolution. Miso never hooks into games (no anti-cheat risk).
 - **Your own images**: upload files, drag images straight from your browser, or paste with
   `Ctrl + V`.
-- **Library**: favourites, search, filters, sorting by last used.
+- **Library**: favourites, search, filters, sorting by last used. Hide items you don't want to see
+  without deleting them (right-click → Hide, find them again under the “Hidden” filter).
 - **Hide NSFW** (on by default): hides anything with 18+, NSFW etc. in the title everywhere,
   without deleting it.
 - **Storage**: see what uses space, clear the cache, and auto-delete items you haven't used for

@@ -179,7 +179,12 @@ class OverlayWindow(QWidget):
             self._animate_opacity(0.0, 180, self.hide)
 
     def fade_out_and_close(self) -> None:
-        self._animate_opacity(0.0, 200, self.close)
+        self._animate_opacity(0.0, 200, self.dispose)
+
+    def dispose(self) -> None:
+        """Close for good. Only the overlay manager does this (it also forgets the window)."""
+        self._disposing = True
+        self.close()
 
     def _apply_click_through(self) -> None:
         winapi.set_click_through(int(self.winId()), not self.edit)
@@ -481,6 +486,10 @@ class OverlayWindow(QWidget):
             winapi.keep_topmost(int(self.winId()))
 
     def closeEvent(self, event) -> None:
+        if not getattr(self, "_disposing", False):
+            # Alt+F4 on a focused overlay or a window-closing quit attempt: Miso decides, not Windows
+            event.ignore()
+            return
         self._timer.stop()
         if self._job:
             self._job.cancelled = True
