@@ -101,11 +101,9 @@ def download(release: Release, progress, cancel: threading.Event) -> Path:
 
 
 def launch_installer(path: Path) -> None:
-    """Run the setup silently a moment after Miso quit; it installs and restarts Miso."""
-    no_window = 0x08000000 | 0x00000200  # CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP
-    # ~2 s pause so this process (and its AppMutex) is gone before the installer checks for it
-    cmd = f'ping -n 3 127.0.0.1 >nul & "{path}" /SILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS'
-    subprocess.Popen(["cmd.exe", "/c", cmd], creationflags=no_window, close_fds=True, cwd=os.path.dirname(path))
+    """Start the setup (visible progress, no questions). It waits until Miso has quit, installs and restarts it."""
+    subprocess.Popen([str(path), "/SILENT", "/SUPPRESSMSGBOXES", "/NORESTART"],
+                     close_fds=True, cwd=os.path.dirname(path))
 
 
 # -- Qt plumbing --------------------------------------------------------------------

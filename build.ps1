@@ -4,8 +4,10 @@ Set-Location $PSScriptRoot
 if (-not (Test-Path .venv)) { python -m venv .venv }
 .\.venv\Scripts\python.exe -m pip install -q -r requirements.txt pyinstaller
 .\.venv\Scripts\python.exe tools\make_icon.py
-.\.venv\Scripts\pyinstaller.exe --noconfirm --clean --windowed --name Miso `
-    --icon assets\icon.ico --add-data "assets;assets" Miso.pyw
+.\.venv\Scripts\python.exe tools\version_info.py
+# no UPX: packed executables trigger far more antivirus false positives
+.\.venv\Scripts\pyinstaller.exe --noconfirm --clean --windowed --noupx --name Miso `
+    --icon assets\icon.ico --version-file build\version_info.txt --add-data "assets;assets" Miso.pyw
 Copy-Item LICENSE dist\Miso\LICENSE.txt -Force
 Copy-Item THIRD_PARTY_NOTICES.md dist\Miso\ -Force
 Write-Host "Fertig: dist\Miso\Miso.exe"
