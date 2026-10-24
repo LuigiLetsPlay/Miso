@@ -3,26 +3,26 @@ from __future__ import annotations
 
 import ctypes
 import hashlib
+import re
 import sys
 from pathlib import Path
 
-from PySide6.QtCore import QObject, QRectF, Qt, QTimer, Signal
-from PySide6.QtGui import QAction, QColor, QCursor, QGuiApplication, QKeySequence, QPainter, QPen, QShortcut
+from PySide6.QtCore import QObject, QRectF, Qt, QTimer, QUrl, Signal
+from PySide6.QtGui import (QAction, QColor, QCursor, QDesktopServices, QGuiApplication, QKeySequence, QPainter,
+                           QPen, QShortcut)
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import (QAbstractButton, QAbstractSlider, QApplication, QHBoxLayout, QLabel,
-                               QLineEdit, QMenu, QPushButton, QStackedWidget, QSystemTrayIcon, QVBoxLayout,
+                               QLineEdit, QMenu, QPushButton, QSystemTrayIcon, QVBoxLayout,
                                QWidget)
 
-from . import importer, media, theme, winapi, workshop
+from . import __version__, hotkeys, importer, media, theme, updater, winapi, workshop
 from .overlay import OverlayWindow, ProfileOSD
 from .pages import ActivePage, LibraryPage, SettingsPage, WorkshopPage
 from .store import APP_NAME, DATA_DIR, UPLOAD_DIR, LibraryItem, OverlayState, Store
-from .widgets import (ConfirmDialog, IconButton, ImageLoader, NavButton, TitleButton, ToastHost,
-                      ToggleSwitch, human_size)
+from .widgets import (ConfirmDialog, FadeStack, IconButton, ImageLoader, NavButton, NavIndicator, ProgressDialog,
+                      TitleButton, ToastHost, ToggleSwitch, human_size)
 
 TITLEBAR_H = 44
-HOTKEY_EDIT, HOTKEY_HIDE, HOTKEY_PREV, HOTKEY_NEXT = 1, 2, 3, 4
-VK_LEFT, VK_RIGHT = 0x25, 0x27
 # one instance per data folder
 SINGLETON = "Miso-" + hashlib.sha1(str(DATA_DIR).lower().encode()).hexdigest()[:10]
 
@@ -52,7 +52,7 @@ class OverlayManager(QObject):
         for s in self.store.overlays:
             win = self.windows.get(s.uid)
             if win:
-                win.setVisible(self.should_show(s))
+                win.set_shown(self.should_show(s))
         self.changed.emit()
 
     def restore(self) -> None:
@@ -94,7 +94,7 @@ class OverlayManager(QObject):
     def remove(self, state: OverlayState) -> None:
         win = self.windows.pop(state.uid, None)
         if win:
-            win.close()
+            win.fade_out_and_close()
         self.store.remove_overlay(state)
         self.changed.emit()
 
@@ -110,7 +110,7 @@ class OverlayManager(QObject):
             if announce:
                 self.osd.announce(self.store)
             return
-        self.close_all()
+        self.close_all(animate=True)
         self.store.set_active(uid)
         self.restore()
         self.changed.emit()
@@ -153,7 +153,7 @@ class OverlayManager(QObject):
         state.visible = visible
         win = self.windows.get(state.uid)
         if win:
-            win.setVisible(self.should_show(state))
+            win.set_shown(self.should_show(state))
         self.store.save()
         self.changed.emit()
 
@@ -173,9 +173,9 @@ class OverlayManager(QObject):
         self.store.save()
         self.changed.emit()
 
-    def close_all(self) -> None:
+    def close_all(self, animate: bool = False) -> None:
         for w in self.windows.values():
-            w.close()
+            w.fade_out_and_close() if animate else w.close()
         self.windows.clear()
 
 
@@ -186,7 +186,7 @@ class EditModeCard(QWidget):
     def __init__(self, manager: OverlayManager) -> None:
         super().__init__()
         self.manager = manager
-        self.setFixedHeight(96)
+        self.setMinimumHeight(96)
         lay = QVBoxLayout(self)
         lay.setContentsMargins(16, 14, 14, 14)
         lay.setSpacing(6)
@@ -204,6 +204,7 @@ class EditModeCard(QWidget):
         self.hint.setStyleSheet(f"color:{theme.MUTED}; font-size:8.5pt; background:transparent;")
         lay.addWidget(self.hint)
         manager.edit_changed.connect(self.refresh)
+        manager.store.hotkeys_changed.connect(lambda: self.refresh(manager.edit))
         self.refresh(manager.edit)
 
     def refresh(self, edit: bool) -> None:
@@ -212,8 +213,9 @@ class EditModeCard(QWidget):
         self.switch._set(1.0 if edit else 0.0)
         self.switch.blockSignals(False)
         self.title.setText("Bearbeiten" if edit else "Fixiert")
-        self.hint.setText("Overlays ziehen & skalieren\nStrg + Alt + E zum Fixieren" if edit
-                          else "Overlays sind durchklickbar\nStrg + Alt + E zum Bearbeiten")
+        key = self.manager.store.hotkey_text("edit")
+        self.hint.setText(f"Overlays ziehen & skalieren\n{key} zum Fixieren" if edit
+                          else f"Overlays sind durchklickbar\n{key} zum Bearbeiten")
         self.update()
 
     def paintEvent(self, e) -> None:
@@ -240,8 +242,9 @@ class ProfileSwitcher(QWidget):
         lay = QHBoxLayout(self)
         lay.setContentsMargins(6, 6, 6, 6)
         lay.setSpacing(2)
-        prev = IconButton("", "Vorheriges Profil (Strg + Alt + ←)", size=30)
-        nxt = IconButton("", "Nächstes Profil (Strg + Alt + →)", size=30)
+        prev = IconButton(theme.Icon.CHEVRON_LEFT, "Vorheriges Profil", size=30)
+        nxt = IconButton(theme.Icon.CHEVRON_RIGHT, "Nächstes Profil", size=30)
+        self._buttons = (prev, nxt)
         prev.clicked.connect(lambda: manager.cycle_profile(-1))
         nxt.clicked.connect(lambda: manager.cycle_profile(1))
         self.name = QPushButton()
@@ -253,9 +256,13 @@ class ProfileSwitcher(QWidget):
         lay.addWidget(self.name, 1)
         lay.addWidget(nxt)
         store.profiles_changed.connect(self.refresh)
+        store.hotkeys_changed.connect(self.refresh)
         self.refresh()
 
     def refresh(self) -> None:
+        prev, nxt = self._buttons
+        prev.setToolTip(f"Vorheriges Profil ({self.store.hotkey_text('prev')})")
+        nxt.setToolTip(f"Nächstes Profil ({self.store.hotkey_text('next')})")
         pr = self.store.profile
         fm = self.name.fontMetrics()
         self.name.setText(fm.elidedText(pr.name, Qt.TextElideMode.ElideRight, 120))
@@ -313,7 +320,7 @@ class Logo(QWidget):
         f = theme.ui_font(16, theme.QFont.Weight.Bold, display=True)
         p.setFont(f)
         p.setPen(QColor(theme.TEXT))
-        p.drawText(QRectF(52, 14, 150, 36), Qt.AlignmentFlag.AlignVCenter, "miso")
+        p.drawText(QRectF(52, 14, 150, 36), Qt.AlignmentFlag.AlignVCenter, APP_NAME)
         p.end()
 
 
@@ -332,6 +339,10 @@ class MainWindow(QWidget):
         self.setAcceptDrops(True)
         self.loader = ImageLoader()
         self.toasts = ToastHost(self)
+        self.updater = updater.Updater()
+        self.updater.available.connect(self._on_update_available)
+        self.updater.up_to_date.connect(self._on_up_to_date)
+        self.updater.failed.connect(self._on_update_check_failed)
         self.importer = importer.Importer()
         self.importer.imported.connect(self._on_imported)
         self.importer.failed.connect(lambda m: self.toast(f"Hinzufügen fehlgeschlagen: {m}", "error"))
@@ -361,7 +372,19 @@ class MainWindow(QWidget):
             b.clicked.connect(lambda _=False, i=len(self.nav): self.go(i))
             sl.addWidget(b)
             self.nav.append(b)
+        self.nav_indicator = NavIndicator(side)
         sl.addStretch()
+        self.update_pill = QPushButton()
+        self.update_pill.setObjectName("UpdatePill")
+        self.update_pill.setIcon(theme.glyph_icon(theme.Icon.DOWNLOAD, theme.ON_ACCENT))
+        self.update_pill.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.update_pill.setStyleSheet(f"QPushButton#UpdatePill {{ background:{theme.ACCENT}; color:{theme.ON_ACCENT};"
+                                       f" border:none; border-radius:12px; padding:10px; }}"
+                                       f"QPushButton#UpdatePill:hover {{ background:#E8E8EC; }}")
+        self.update_pill.clicked.connect(lambda: self.offer_update(self.updater.latest, manual=True))
+        self.update_pill.hide()
+        sl.addWidget(self.update_pill)
+        sl.addSpacing(6)
         sl.addWidget(ProfileSwitcher(store, manager, lambda: self.go(2)))
         sl.addSpacing(6)
         sl.addWidget(EditModeCard(manager))
@@ -389,7 +412,7 @@ class MainWindow(QWidget):
         titlebar.setLayout(bar)
         ml.addWidget(titlebar)
 
-        self.stack = QStackedWidget()
+        self.stack = FadeStack()
         self.workshop_page = WorkshopPage(store, downloads, self.loader, self.toast)
         self.library_page = LibraryPage(store, self.loader, manager.active_paths)
         self.active_page = ActivePage(store, self.loader, manager)
@@ -421,10 +444,7 @@ class MainWindow(QWidget):
             winapi.user32.SetWindowLongPtrW(hwnd, -16, style | 0x00C00000 | 0x00040000 | 0x00020000 | 0x00010000)
             winapi.style_window(hwnd)
             winapi.user32.SetWindowPos(hwnd, 0, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0004 | 0x0020)  # FRAMECHANGED
-            winapi.register_hotkey(hwnd, HOTKEY_EDIT, winapi.MOD_CONTROL | winapi.MOD_ALT, ord("E"))
-            winapi.register_hotkey(hwnd, HOTKEY_HIDE, winapi.MOD_CONTROL | winapi.MOD_ALT, ord("H"))
-            self._profile_keys = (winapi.register_hotkey(hwnd, HOTKEY_PREV, winapi.MOD_CONTROL | winapi.MOD_ALT, VK_LEFT)
-                                  and winapi.register_hotkey(hwnd, HOTKEY_NEXT, winapi.MOD_CONTROL | winapi.MOD_ALT, VK_RIGHT))
+            self.failed_hotkeys = self.register_hotkeys()
 
     def nativeEvent(self, event_type, message):
         if event_type != b"windows_generic_MSG" and event_type != "windows_generic_MSG":
@@ -443,16 +463,51 @@ class MainWindow(QWidget):
         if msg.message == winapi.WM_NCHITTEST:
             return True, self._hit_test()
         if msg.message == winapi.WM_HOTKEY:
-            if msg.wParam == HOTKEY_EDIT:
+            action = next((a for a, (hid, _, _) in hotkeys.ACTIONS.items() if hid == msg.wParam), None)
+            if action == "edit":
                 self.manager.set_edit(not self.manager.edit)
-            elif msg.wParam == HOTKEY_HIDE:
+            elif action == "hide":
                 self.manager.set_all_hidden(not self.manager.all_hidden)
-            elif msg.wParam == HOTKEY_PREV:
+            elif action == "prev":
                 self.manager.cycle_profile(-1)
-            elif msg.wParam == HOTKEY_NEXT:
+            elif action == "next":
                 self.manager.cycle_profile(1)
             return True, 0
         return super().nativeEvent(event_type, message)
+
+    # -- global hotkeys ----------------------------------------------------------
+    def unregister_hotkeys(self) -> None:
+        if self._native_ready:
+            for hid, _, _ in hotkeys.ACTIONS.values():
+                winapi.unregister_hotkey(int(self.winId()), hid)
+
+    def register_hotkeys(self) -> list[str]:
+        """(Re)register all global hotkeys; returns actions whose combo another app already uses."""
+        self.unregister_hotkeys()
+        failed = []
+        for action, (hid, _, _) in hotkeys.ACTIONS.items():
+            parsed = hotkeys.parse(self.store.hotkey(action))
+            if not parsed or not winapi.register_hotkey(int(self.winId()), hid, *parsed):
+                failed.append(action)
+        return failed
+
+    def change_hotkey(self, action: str, combo: str | None) -> bool:
+        """Set a hotkey from the settings page (None = default). Keeps the old one if the new can't be used."""
+        new = combo or hotkeys.default(action)
+        clash = next((a for a in hotkeys.ACTIONS if a != action and self.store.hotkey(a) == new), None)
+        if clash:
+            self.toast(f"{hotkeys.display(new)} ist schon für „{hotkeys.ACTIONS[clash][1]}“ vergeben", "error")
+            self.register_hotkeys()
+            return False
+        old = self.store.settings.hotkeys.get(action)
+        self.store.set_hotkey(action, combo)
+        if action in self.register_hotkeys():
+            self.store.set_hotkey(action, old)
+            self.register_hotkeys()
+            self.toast(f"{hotkeys.display(new)} wird schon von einem anderen Programm benutzt", "error")
+            return False
+        self.toast(f"{hotkeys.ACTIONS[action][1]}: {self.store.hotkey_text(action)}", "ok")
+        return True
 
     def _hit_test(self) -> int:
         pos = self.mapFromGlobal(QCursor.pos())
@@ -493,6 +548,11 @@ class MainWindow(QWidget):
             self.btn_max.glyph = theme.Icon.RESTORE if self.isMaximized() else theme.Icon.MAX
             self.btn_max.update()
 
+    def showEvent(self, e) -> None:
+        super().showEvent(e)
+        # buttons only have real geometry once laid out
+        QTimer.singleShot(0, lambda: self.nav_indicator.move_to(self.nav[self.stack.currentIndex()], animate=False))
+
     def resizeEvent(self, e) -> None:
         super().resizeEvent(e)
         self.toasts.reposition()
@@ -500,6 +560,7 @@ class MainWindow(QWidget):
     # -- navigation & actions -------------------------------------------------
     def go(self, index: int) -> None:
         self.nav[index].setChecked(True)
+        self.nav_indicator.move_to(self.nav[index], animate=self.isVisible())
         self.stack.setCurrentIndex(index)
 
     def toast(self, text: str, kind: str = "info") -> None:
@@ -512,7 +573,8 @@ class MainWindow(QWidget):
         first = not self.store.overlays
         self.manager.place(item, near=self)
         if first and self.store.settings.show_tips:
-            self.toast("Ziehen zum Verschieben, Mausrad zum Skalieren. Strg + Alt + E fixiert die Overlays.")
+            self.toast(f"Ziehen zum Verschieben, Mausrad zum Skalieren. {self.store.hotkey_text('edit')} "
+                       "fixiert die Overlays.")
         else:
             self.toast(f"„{item.title}“ platziert", "ok")
 
@@ -592,6 +654,89 @@ class MainWindow(QWidget):
         days = self.store.settings.auto_delete_days
         if days and self.isVisible():
             self.delete_unused(days, auto=True)
+
+    # -- updates (GitHub releases) ------------------------------------------------
+    def check_updates(self, manual: bool = False) -> None:
+        if not manual and not self.store.settings.update_check:
+            return
+        self._manual_update_check = manual
+        if manual:
+            self.toast("Suche nach Updates …")
+        self.updater.check()
+
+    def _on_update_available(self, release) -> None:
+        self.update_pill.setText(f"  Update auf {release.version}")
+        self.update_pill.show()
+        manual = getattr(self, "_manual_update_check", False)
+        self._manual_update_check = False
+        s = self.store.settings
+        if not manual and s.update_auto_install and updater.is_installed():
+            self.start_update(release)
+        elif manual or s.update_dismissed != release.version:
+            self.offer_update(release, manual)
+
+    def _on_up_to_date(self) -> None:
+        if getattr(self, "_manual_update_check", False):
+            self._manual_update_check = False
+            self.toast(f"Miso ist aktuell (Version {__version__})", "ok")
+
+    def _on_update_check_failed(self, message: str) -> None:
+        if getattr(self, "_manual_update_check", False):
+            self._manual_update_check = False
+            self.toast(f"Update-Suche fehlgeschlagen: {message}", "error")
+
+    def offer_update(self, release, manual: bool = False) -> None:
+        if release is None:
+            return
+        if not self.isVisible():
+            self.bring_to_front()
+        notes = re.sub(r"[#*`>]|\[([^\]]*)\]\([^)]*\)", lambda m: m.group(1) or "", release.notes).strip()
+        notes = re.sub(r"\n{3,}", "\n\n", notes)
+        if len(notes) > 600:
+            notes = notes[:600].rsplit("\n", 1)[0] + "\n…"
+        text = f"Du hast Version {__version__}.\n\n{notes}" if notes else f"Du hast Version {__version__}."
+        if not updater.is_installed():
+            text += "\n\nDiese Kopie ist nicht installiert (portabel). Die Release-Seite wird im Browser geöffnet."
+        if ConfirmDialog.ask(self, f"Miso {release.version} ist da", text, "Jetzt aktualisieren",
+                             cancel="Später", danger=False):
+            self.start_update(release)
+        else:
+            self.store.settings.update_dismissed = release.version
+            self.store.save()
+
+    def start_update(self, release) -> None:
+        if not updater.is_installed():
+            QDesktopServices.openUrl(QUrl(release.page_url))
+            return
+        dlg = ProgressDialog(self, f"Miso {release.version} wird heruntergeladen")
+        self.updater.progress.connect(dlg.set_progress)
+        dlg.cancelled.connect(lambda: (self.updater.cancel.set(), dlg.reject()))
+
+        def done(path: str) -> None:
+            dlg.status.setText("Wird installiert, Miso startet gleich neu …")
+            dlg.cancel_btn.setEnabled(False)
+            updater.launch_installer(Path(path))
+            self._quitting = True
+            QTimer.singleShot(400, QApplication.instance().quit)
+
+        def failed(message: str) -> None:
+            dlg.reject()
+            if message != "Abgebrochen":
+                self.toast(f"Update fehlgeschlagen: {message}", "error")
+
+        self.updater.downloaded.connect(done)
+        self.updater.download_failed.connect(failed)
+        dlg.finished.connect(lambda *_: self._disconnect_update(dlg, done, failed))
+        self.updater.download(release)
+        dlg.show()
+
+    def _disconnect_update(self, dlg, done, failed) -> None:
+        for sig, slot in ((self.updater.progress, dlg.set_progress), (self.updater.downloaded, done),
+                          (self.updater.download_failed, failed)):
+            try:
+                sig.disconnect(slot)
+            except (RuntimeError, TypeError):
+                pass
 
     def apply_autostart(self, on: bool) -> None:
         if getattr(sys, "frozen", False):
@@ -720,6 +865,7 @@ def main() -> int:
     app.setWindowIcon(theme.app_icon())
 
     store = Store()
+    theme.ANIMATIONS = store.settings.animations and theme.system_animations_enabled()
     manager = OverlayManager(store)
     downloads = workshop.DownloadManager(store)
     window = MainWindow(store, manager, downloads)
@@ -736,14 +882,17 @@ def main() -> int:
     cleanup = QTimer(app, interval=6 * 3600 * 1000, timeout=window.check_auto_delete)
     cleanup.start()
 
+    # update check: a few seconds after start, then twice a day
+    QTimer.singleShot(5000, window.check_updates)
+    update_timer = QTimer(app, interval=12 * 3600 * 1000, timeout=window.check_updates)
+    update_timer.start()
+
     def shutdown() -> None:
         downloads.cancel_all()
         store.save_now()
         manager.close_all()
         if winapi.IS_WIN:
-            winapi.unregister_hotkey(int(window.winId()), HOTKEY_EDIT)
-            for key in (HOTKEY_HIDE, HOTKEY_PREV, HOTKEY_NEXT):
-                winapi.unregister_hotkey(int(window.winId()), key)
+            window.unregister_hotkeys()
         app.tray.hide()
     app.aboutToQuit.connect(shutdown)
     return app.exec()

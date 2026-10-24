@@ -3,7 +3,8 @@ from __future__ import annotations
 
 import math
 
-from PySide6.QtCore import QPoint, QPointF, QPropertyAnimation, QRect, QRectF, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import (Property, QEasingCurve, QPoint, QPointF, QPropertyAnimation, QRect, QRectF, QSize, Qt,
+                            QTimer, Signal)
 from PySide6.QtGui import (QAction, QColor, QCursor, QGuiApplication, QPainter, QPainterPath, QPen,
                            QTransform)
 from PySide6.QtWidgets import QMenu, QWidget
@@ -44,6 +45,15 @@ class OverlayWindow(QWidget):
         self._timer = QTimer(self, singleShot=True, timerType=Qt.TimerType.PreciseTimer)
         self._timer.timeout.connect(self._next_frame)
         self._redecode = QTimer(self, singleShot=True, interval=350, timeout=self._maybe_decode)
+
+        # motion: window fade (show/hide/remove) and the edit-mode frame fading in/out
+        self._chrome = 1.0 if edit_mode else 0.0
+        self._chrome_anim = QPropertyAnimation(self, b"chrome", self)
+        self._chrome_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._fade = QPropertyAnimation(self, b"windowOpacity", self)
+        self._fade.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._after_fade = None
+        self._fade.finished.connect(self._fade_done)
 
         self.setGeometry(state.x, state.y, max(MIN_SIDE, state.w), max(MIN_SIDE, state.h))
         self._maybe_decode()
@@ -121,7 +131,53 @@ class OverlayWindow(QWidget):
         self.edit = edit
         self._apply_click_through()
         self.setCursor(Qt.CursorShape.SizeAllCursor if edit else Qt.CursorShape.ArrowCursor)
+        target = 1.0 if edit else 0.0
+        if self._chrome != target:
+            self._chrome_anim.stop()
+            self._chrome_anim.setDuration(theme.ms(200))
+            self._chrome_anim.setEndValue(target)
+            self._chrome_anim.start()
         self.update()
+
+    def _get_chrome(self) -> float:
+        return self._chrome
+
+    def _set_chrome(self, v: float) -> None:
+        self._chrome = v
+        self.update()
+
+    chrome = Property(float, _get_chrome, _set_chrome)
+
+    # -- fading -------------------------------------------------------------
+    def _animate_opacity(self, target: float, duration: int, then=None) -> None:
+        self._fade.stop()
+        self._after_fade = then
+        if not theme.ANIMATIONS:
+            self.setWindowOpacity(target)
+            self._fade_done()
+            return
+        self._fade.setDuration(theme.ms(duration))
+        self._fade.setStartValue(self.windowOpacity())
+        self._fade.setEndValue(target)
+        self._fade.start()
+
+    def _fade_done(self) -> None:
+        action, self._after_fade = self._after_fade, None
+        if action:
+            action()
+
+    def set_shown(self, visible: bool) -> None:
+        """Show/hide with a fade."""
+        if visible:
+            if not self.isVisible():
+                self.show()           # showEvent fades in
+            else:
+                self._animate_opacity(1.0, 180)
+        elif self.isVisible():
+            self._animate_opacity(0.0, 180, self.hide)
+
+    def fade_out_and_close(self) -> None:
+        self._animate_opacity(0.0, 200, self.close)
 
     def _apply_click_through(self) -> None:
         winapi.set_click_through(int(self.winId()), not self.edit)
@@ -130,6 +186,9 @@ class OverlayWindow(QWidget):
         super().showEvent(event)
         self._apply_click_through()
         self.set_edit_mode(self.edit)
+        if theme.ANIMATIONS:
+            self.setWindowOpacity(0.0)
+        self._animate_opacity(1.0, 240)
 
     def apply_state(self) -> None:
         """Re-read opacity/speed/flip after they were changed elsewhere."""
@@ -145,11 +204,11 @@ class OverlayWindow(QWidget):
         p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         r = QRectF(self.rect())
 
-        if self.edit:
+        if self._chrome > 0:
             # near-invisible fill so the whole rectangle is grabbable
             bg = QPainterPath()
             bg.addRoundedRect(r.adjusted(1, 1, -1, -1), 10, 10)
-            p.fillPath(bg, QColor(20, 16, 32, 70 if self._hover else 28))
+            p.fillPath(bg, QColor(20, 16, 32, int((70 if self._hover else 28) * self._chrome)))
 
         if self.frames and self.frames.images:
             img = self.frames.images[self.index]
@@ -168,7 +227,8 @@ class OverlayWindow(QWidget):
             p.setFont(theme.ui_font(9))
             p.drawText(self.rect(), Qt.AlignmentFlag.AlignCenter, "Lädt …")
 
-        if self.edit:
+        if self._chrome > 0:
+            p.setOpacity(self._chrome)
             self._paint_edit_chrome(p, r)
         p.end()
 

@@ -9,8 +9,8 @@ from PySide6.QtGui import (QColor, QFontMetrics, QImage, QLinearGradient, QPaint
                            QPixmap)
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkDiskCache, QNetworkReply, QNetworkRequest
 from PySide6.QtWidgets import (QAbstractButton, QDialog, QFrame, QGraphicsDropShadowEffect,
-                               QGraphicsOpacityEffect, QHBoxLayout, QLabel, QLineEdit, QPushButton,
-                               QVBoxLayout, QWidget)
+                               QGraphicsOpacityEffect, QHBoxLayout, QLabel, QLineEdit, QProgressBar, QPushButton,
+                               QStackedWidget, QVBoxLayout, QWidget)
 
 from . import media, theme
 from .store import CACHE_DIR
@@ -286,31 +286,45 @@ class NavButton(QAbstractButton):
         self.setAutoExclusive(True)
         self.setFixedHeight(42)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        self._hover = False
+        self._hover = 0.0
+        self._anim = QPropertyAnimation(self, b"hover", self)
+        self._anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+    def _get_hover(self) -> float:
+        return self._hover
+
+    def _set_hover(self, v: float) -> None:
+        self._hover = v
+        self.update()
+
+    hover = Property(float, _get_hover, _set_hover)
 
     def set_badge(self, n: int) -> None:
         self.badge = n
         self.update()
 
+    def _fade(self, target: float) -> None:
+        self._anim.stop()
+        self._anim.setDuration(theme.ms(160))
+        self._anim.setEndValue(target)
+        self._anim.start()
+
     def enterEvent(self, e) -> None:
-        self._hover = True
-        self.update()
+        self._fade(1.0)
 
     def leaveEvent(self, e) -> None:
-        self._hover = False
-        self.update()
+        self._fade(0.0)
 
     def paintEvent(self, event) -> None:
+        # the selected background is a separate NavIndicator that slides between buttons
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         r = QRectF(self.rect()).adjusted(0, 2, 0, -2)
-        if self.isChecked():
-            p.fillPath(rounded(r, 10), QColor(theme.SURFACE_2))
-            bar = QRectF(r.left(), r.center().y() - 9, 3, 18)
-            p.fillPath(rounded(bar, 1.5), theme.accent_gradient(bar))
-        elif self._hover:
-            p.fillPath(rounded(r, 10), QColor(theme.SURFACE))
-        active = self.isChecked() or self._hover
+        if self._hover > 0 and not self.isChecked():
+            bg = QColor(theme.SURFACE)
+            bg.setAlphaF(self._hover)
+            p.fillPath(rounded(r, 10), bg)
+        active = self.isChecked() or self._hover > 0.5
         p.setPen(QColor(theme.TEXT if active else theme.MUTED))
         p.setFont(theme.icon_font(11.5))
         p.drawText(QRectF(r.left() + 14, r.top(), 24, r.height()), Qt.AlignmentFlag.AlignCenter, self.glyph)
@@ -326,6 +340,89 @@ class NavButton(QAbstractButton):
             p.setPen(QColor(theme.TEXT))
             p.drawText(b, Qt.AlignmentFlag.AlignCenter, text)
         p.end()
+
+
+class NavIndicator(QWidget):
+    """The selected-item pill in the sidebar; glides to whichever NavButton is active."""
+
+    def __init__(self, parent: QWidget) -> None:
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+        self._anim = QPropertyAnimation(self, b"geometry", self)
+        self._anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+    def move_to(self, button: QWidget, animate: bool = True) -> None:
+        target = button.geometry()
+        self.lower()
+        self.show()
+        self._anim.stop()
+        if not animate or not theme.ANIMATIONS or self.geometry().isEmpty():
+            self.setGeometry(target)
+            return
+        self._anim.setDuration(theme.ms(260))
+        self._anim.setStartValue(self.geometry())
+        self._anim.setEndValue(target)
+        self._anim.start()
+
+    def paintEvent(self, event) -> None:
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = QRectF(self.rect()).adjusted(0, 2, 0, -2)
+        p.fillPath(rounded(r, 10), QColor(theme.SURFACE_2))
+        bar = QRectF(r.left(), r.center().y() - 9, 3, 18)
+        p.fillPath(rounded(bar, 1.5), theme.accent_gradient(bar))
+        p.end()
+
+
+class FadeStack(QStackedWidget):
+    """QStackedWidget whose pages fade in and drift up slightly when shown."""
+
+    def setCurrentIndex(self, index: int) -> None:
+        if index == self.currentIndex():
+            return
+        super().setCurrentIndex(index)
+        if not theme.ANIMATIONS:
+            return
+        page = self.currentWidget()
+        effect = QGraphicsOpacityEffect(page)
+        effect.setOpacity(0.0)
+        page.setGraphicsEffect(effect)
+        fade = QPropertyAnimation(effect, b"opacity", page)
+        fade.setDuration(theme.ms(220))
+        fade.setStartValue(0.0)
+        fade.setEndValue(1.0)
+        fade.setEasingCurve(QEasingCurve.Type.OutCubic)
+        end = page.pos()
+        slide = QPropertyAnimation(page, b"pos", page)
+        slide.setDuration(theme.ms(280))
+        slide.setStartValue(end + QPoint(0, 14))
+        slide.setEndValue(end)
+        slide.setEasingCurve(QEasingCurve.Type.OutCubic)
+        # drop the effect afterwards: it would slow down scrolling
+        fade.finished.connect(lambda: page.setGraphicsEffect(None))
+        fade.start(QPropertyAnimation.DeletionPolicy.DeleteWhenStopped)
+        slide.start(QPropertyAnimation.DeletionPolicy.DeleteWhenStopped)
+
+
+def fade_in_window(window: QWidget, rise: int = 10, duration: int = 180) -> None:
+    """Fade a top-level window in and let it rise a few pixels (used for popups)."""
+    if not theme.ANIMATIONS:
+        return
+    window.setWindowOpacity(0.0)
+    fade = QPropertyAnimation(window, b"windowOpacity", window)
+    fade.setDuration(theme.ms(duration))
+    fade.setStartValue(0.0)
+    fade.setEndValue(1.0)
+    fade.setEasingCurve(QEasingCurve.Type.OutCubic)
+    fade.start(QPropertyAnimation.DeletionPolicy.DeleteWhenStopped)
+    if rise:
+        end = window.pos()
+        slide = QPropertyAnimation(window, b"pos", window)
+        slide.setDuration(theme.ms(duration + 60))
+        slide.setStartValue(end + QPoint(0, rise))
+        slide.setEndValue(end)
+        slide.setEasingCurve(QEasingCurve.Type.OutCubic)
+        slide.start(QPropertyAnimation.DeletionPolicy.DeleteWhenStopped)
 
 
 # -- cards ------------------------------------------------------------------------
@@ -352,10 +449,16 @@ class MediaCard(QWidget):
         self.status = ""
         self.favorite: bool | None = None   # None = card has no favourite star
         self._hover = 0.0
+        self._reveal = 1.0                  # 0..1 while the card animates in
+        self._img = 1.0 if loader.get(image_key) else 0.0   # thumbnail fade-in
         self.setMouseTracking(True)
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self._anim = QPropertyAnimation(self, b"hover", self)
-        self._anim.setDuration(140)
+        self._anim.setDuration(theme.ms(160))
+        self._anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._reveal_anim = QPropertyAnimation(self, b"reveal", self)
+        self._reveal_anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+        self._img_anim = QPropertyAnimation(self, b"img", self)
         loader.loaded.connect(self._on_loaded)
 
     def _get_hover(self) -> float:
@@ -367,8 +470,46 @@ class MediaCard(QWidget):
 
     hover = Property(float, _get_hover, _set_hover)
 
+    def _get_reveal(self) -> float:
+        return self._reveal
+
+    def _set_reveal(self, v: float) -> None:
+        self._reveal = v
+        self.update()
+
+    reveal = Property(float, _get_reveal, _set_reveal)
+
+    def _get_img(self) -> float:
+        return self._img
+
+    def _set_img(self, v: float) -> None:
+        self._img = v
+        self.update()
+
+    img = Property(float, _get_img, _set_img)
+
+    def animate_in(self, delay: int = 0) -> None:
+        """Fade + rise into place, optionally after `delay` ms (for staggered grids)."""
+        if not theme.ANIMATIONS:
+            return
+        self._reveal = 0.0
+        self._reveal_anim.stop()
+        self._reveal_anim.setDuration(theme.ms(340))
+        self._reveal_anim.setStartValue(0.0)
+        self._reveal_anim.setEndValue(1.0)
+        QTimer.singleShot(delay, self._reveal_anim.start)
+
     def _on_loaded(self, key: str, pm: QPixmap) -> None:
-        if key == self.image_key:
+        if key != self.image_key:
+            return
+        if theme.ANIMATIONS and self._img < 1.0:
+            self._img_anim.stop()
+            self._img_anim.setDuration(theme.ms(260))
+            self._img_anim.setStartValue(0.0)
+            self._img_anim.setEndValue(1.0)
+            self._img_anim.start()
+        else:
+            self._img = 1.0
             self.update()
 
     def set_state(self, action: str = "", glyph: str = "", badge: str = "", progress: float = -1.0,
@@ -408,14 +549,24 @@ class MediaCard(QWidget):
         p = QPainter(self)
         p.setRenderHint(QPainter.RenderHint.Antialiasing)
         p.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        if self._reveal < 1.0:  # entrance animation
+            p.setOpacity(self._reveal)
+            p.translate(0, (1.0 - self._reveal) * 18)
         w = self.width()
         lift = 3 * self._hover
         img_rect = QRectF(0, 4 - lift, w, w)
 
         p.fillPath(rounded(img_rect, 14), QColor(theme.SURFACE))
         pm = self.loader.get(self.image_key)
+        if pm and self._img < 1.0:
+            p.setPen(QColor(theme.DIM))
+            p.setFont(theme.icon_font(22))
+            p.drawText(img_rect, Qt.AlignmentFlag.AlignCenter, theme.Icon.PHOTO)
         if pm:
+            base = p.opacity()
+            p.setOpacity(base * self._img)
             draw_cover(p, pm, img_rect, 14)
+            p.setOpacity(base)
         else:
             p.setPen(QColor(theme.DIM))
             p.setFont(theme.icon_font(22))
@@ -621,6 +772,7 @@ class ConfirmDialog(QDialog):
         parent = self.parentWidget()
         if parent and parent.isVisible():
             self.move(parent.geometry().center() - self.rect().center())
+        fade_in_window(self)
 
     @staticmethod
     def ask(parent: QWidget, title: str, text: str, confirm: str = "Löschen", cancel: str = "Abbrechen",
@@ -635,6 +787,63 @@ class ConfirmDialog(QDialog):
         return None
 
 
+class ProgressDialog(QDialog):
+    """Frameless progress popup (used while an update downloads). Emits `cancelled`."""
+
+    cancelled = Signal()
+
+    def __init__(self, parent: QWidget, title: str) -> None:
+        super().__init__(parent)
+        self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint
+                            | Qt.WindowType.WindowStaysOnTopHint)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setModal(True)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(18, 18, 18, 18)
+        card = QFrame()
+        card.setObjectName("DialogCard")
+        card.setStyleSheet(f"QFrame#DialogCard {{ background:{theme.SURFACE_2}; border:1px solid #33333A;"
+                           f" border-radius:16px; }}")
+        outer.addWidget(card)
+        lay = QVBoxLayout(card)
+        lay.setContentsMargins(24, 22, 24, 20)
+        lay.setSpacing(12)
+        t = QLabel(title)
+        t.setStyleSheet("font-size:12pt; font-weight:600; background:transparent;")
+        lay.addWidget(t)
+        self.bar = QProgressBar()
+        self.bar.setRange(0, 1000)
+        self.bar.setTextVisible(False)
+        self.bar.setFixedHeight(6)
+        self.bar.setStyleSheet(f"QProgressBar {{ background:{theme.SURFACE_3}; border:none; border-radius:3px; }}"
+                               f"QProgressBar::chunk {{ background:{theme.ACCENT}; border-radius:3px; }}")
+        lay.addWidget(self.bar)
+        self.status = QLabel("Wird vorbereitet …")
+        self.status.setStyleSheet(f"color:{theme.MUTED}; background:transparent;")
+        lay.addWidget(self.status)
+        row = QHBoxLayout()
+        row.addStretch()
+        self.cancel_btn = QPushButton("Abbrechen")
+        self.cancel_btn.clicked.connect(self.cancelled.emit)
+        row.addWidget(self.cancel_btn)
+        lay.addLayout(row)
+        self.setFixedWidth(440)
+
+    def set_progress(self, done: int, total: int) -> None:
+        if total:
+            self.bar.setValue(int(done * 1000 / total))
+            self.status.setText(f"{human_size(done)} von {human_size(total)}")
+        else:
+            self.status.setText(human_size(done))
+
+    def showEvent(self, e) -> None:
+        super().showEvent(e)
+        parent = self.parentWidget()
+        if parent and parent.isVisible():
+            self.move(parent.geometry().center() - self.rect().center())
+        fade_in_window(self)
+
+
 # -- toasts ---------------------------------------------------------------------
 
 class Toast(QLabel):
@@ -646,7 +855,8 @@ class Toast(QLabel):
                      f'&nbsp;&nbsp;{text}')
         self.setTextFormat(Qt.TextFormat.RichText)
         self.setWordWrap(True)
-        self.setMaximumWidth(420)
+        self.setMinimumWidth(300)
+        self.setMaximumWidth(440)
         self.setStyleSheet(f"background:{theme.SURFACE_2}; border:1px solid {theme.BORDER};"
                            f"border-left:3px solid {color}; border-radius:12px; padding:12px 16px;"
                            f"font-size:9.5pt;")
@@ -654,7 +864,7 @@ class Toast(QLabel):
         effect = QGraphicsOpacityEffect(self)
         self.setGraphicsEffect(effect)
         self._fade = QPropertyAnimation(effect, b"opacity", self)
-        self._fade.setDuration(220)
+        self._fade.setDuration(theme.ms(220))
         self._fade.setStartValue(0.0)
         self._fade.setEndValue(1.0)
         self._fade.start()
@@ -686,11 +896,27 @@ class ToastHost(QObject):
         self.reposition()
 
     def reposition(self) -> None:
-        y = self.window.height() - 24
+        try:
+            y = self.window.height() - 24
+        except RuntimeError:  # window already gone during shutdown
+            return
         for t in reversed(self.toasts):
             try:
                 y -= t.height()
-                t.move(self.window.width() - t.width() - 24, y)
+                target = QPoint(self.window.width() - t.width() - 24, y)
                 y -= 10
+                placed = getattr(t, "_placed", False)
+                t._placed = True
+                if not theme.ANIMATIONS or (placed and t.pos() == target):
+                    t.move(target)
+                    continue
+                # new toasts slide in from the right, existing ones glide to their new slot
+                start = target + QPoint(40, 0) if not placed else t.pos()
+                anim = QPropertyAnimation(t, b"pos", t)
+                anim.setDuration(theme.ms(260))
+                anim.setStartValue(start)
+                anim.setEndValue(target)
+                anim.setEasingCurve(QEasingCurve.Type.OutCubic)
+                anim.start(QPropertyAnimation.DeletionPolicy.DeleteWhenStopped)
             except RuntimeError:
                 pass

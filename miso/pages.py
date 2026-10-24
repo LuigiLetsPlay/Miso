@@ -4,12 +4,12 @@ from __future__ import annotations
 import shutil
 from pathlib import Path
 
-from PySide6.QtCore import QPoint, QRectF, Qt, QThreadPool, QTimer, QUrl, Signal
+from PySide6.QtCore import QEvent, QPoint, QRectF, Qt, QThreadPool, QTimer, QUrl, Signal
 from PySide6.QtGui import QColor, QDesktopServices, QPainter, QPen, QPixmap
 from PySide6.QtWidgets import (QButtonGroup, QComboBox, QFileDialog, QFrame, QHBoxLayout, QLabel, QLineEdit,
                                QMenu, QPushButton, QScrollArea, QSizePolicy, QSlider, QVBoxLayout, QWidget)
 
-from . import theme, workshop
+from . import __version__, hotkeys, theme, workshop
 from .store import CACHE_DIR, UPLOAD_DIR, WORKSHOP_DIR, LibraryItem, OverlayState, Store
 from .widgets import (CardGrid, ConfirmDialog, IconButton, ImageLoader, MediaCard, ToggleSwitch, human_ago,
                       human_count, human_size, rounded)
@@ -239,6 +239,7 @@ class WorkshopPage(QWidget):
         self.total_pages = page.total_pages
         what = f"„{self.search}“" if self.search else workshop.SORTS[self.sort]
         self.subtitle.setText(f"AnimaEngine Steam Workshop  ·  {page.total:,} Items  ·  {what}".replace(",", "."))
+        added = 0
         for item in page.items:
             if item.id in self.cards:
                 continue
@@ -249,6 +250,8 @@ class WorkshopPage(QWidget):
             card.context.connect(self._on_card_menu)
             self.cards[item.id] = card
             self.grid.add(card)
+            card.animate_in(min(added * 30, 450))
+            added += 1
             self.loader.request_url(item.thumb_url)
             self._refresh_card(item.id)
         self.apply_filter()
@@ -483,11 +486,11 @@ class LibraryPage(QWidget):
 
     def _set_query(self, text: str) -> None:
         self.query = text.strip().lower()
-        self.rebuild()
+        self.rebuild(animate=True)
 
     def _set_filter(self, key: str) -> None:
         self.filter = key
-        self.rebuild()
+        self.rebuild(animate=True)
 
     def _sort_menu(self) -> None:
         menu = QMenu(self)
@@ -499,7 +502,7 @@ class LibraryPage(QWidget):
     def _set_sort(self, key: str) -> None:
         self.store.settings.library_sort = key
         self.store.save()
-        self.rebuild()
+        self.rebuild(animate=True)
 
     def _visible_items(self) -> tuple[list[LibraryItem], int]:
         items, nsfw = [], 0
@@ -523,7 +526,15 @@ class LibraryPage(QWidget):
         items.sort(key=lambda i: not i.favorite)  # favourites first, stable within
         return items, nsfw
 
-    def rebuild(self) -> None:
+    def showEvent(self, e) -> None:
+        super().showEvent(e)
+        self.rebuild(animate=True)
+
+    def rebuild(self, animate: bool = False) -> None:
+        """Rebuild the grid. Cards animate in when `animate`, otherwise only newly added ones do."""
+        previous = getattr(self, "_keys", set())
+        self._keys = set()
+        n = 0
         self.grid.clear()
         self.sort_btn.setText(f"Sortieren: {LIB_SORTS.get(self.store.settings.library_sort, '')}  ▾")
         items, nsfw = self._visible_items()
@@ -543,6 +554,10 @@ class LibraryPage(QWidget):
             card.context.connect(self._menu)
             card.favorite_clicked.connect(lambda it: self.store.set_favorite(it, not it.favorite))
             self.grid.add(card)
+            self._keys.add(item.key)
+            if self.isVisible() and (animate or item.key not in previous):
+                card.animate_in(min(n * 30, 450))
+                n += 1
         self.grid.relayout()
         total = len(self.store.library) - nsfw
         parts = [f"{total} {'Element' if total == 1 else 'Elemente'}",
@@ -691,6 +706,7 @@ class ProfileBar(QWidget):
         self.lay.setContentsMargins(0, 0, 0, 0)
         self.lay.setSpacing(8)
         store.profiles_changed.connect(self.rebuild)
+        store.hotkeys_changed.connect(self.rebuild)
         self.rebuild()
 
     def rebuild(self) -> None:
@@ -717,10 +733,10 @@ class ProfileBar(QWidget):
         add.clicked.connect(self.add_profile)
         self.lay.addWidget(add)
         self.lay.addStretch()
-        hint = QLabel("Strg + Alt + ← / → zum Wechseln")
+        hint = QLabel(f"{self.store.hotkey_text('prev')}  /  {self.store.hotkey_text('next')} zum Wechseln")
         hint.setObjectName("Dim")
         self.lay.addWidget(hint)
-        more = IconButton("", "Profil verwalten", size=32)
+        more = IconButton(theme.Icon.MORE, "Profil verwalten", size=32)
         more.clicked.connect(lambda: self.menu(self.store.profile, more.mapToGlobal(QPoint(0, more.height() + 4))))
         self.lay.addWidget(more)
 
@@ -782,14 +798,12 @@ class ActivePage(QWidget):
         root.addLayout(top)
         root.addWidget(ProfileBar(store, manager))
 
-        tips = QLabel(
-            f'<span style="color:{theme.MUTED}">Im <b style="color:{theme.TEXT}">Bearbeiten-Modus</b> kannst du Overlays '
-            f'ziehen, an den Ecken skalieren oder mit dem <b style="color:{theme.TEXT}">Mausrad</b> zoomen. '
-            f'Rechtsklick öffnet mehr Optionen. Danach mit <b style="color:{theme.TEXT}">Strg + Alt + E</b> fixieren: '
-            f'Dann lassen sich die Overlays durchklicken.</span>')
-        tips.setWordWrap(True)
-        tips.setStyleSheet(f"background:{theme.SURFACE}; border:1px solid {theme.BORDER}; border-radius:14px; padding:14px 16px;")
-        root.addWidget(tips)
+        self.tips = QLabel()
+        self.tips.setWordWrap(True)
+        self.tips.setStyleSheet(f"background:{theme.SURFACE}; border:1px solid {theme.BORDER}; border-radius:14px; padding:14px 16px;")
+        root.addWidget(self.tips)
+        self._update_tips()
+        store.hotkeys_changed.connect(self._update_tips)
 
         content = QWidget()
         self.list = QVBoxLayout(content)
@@ -823,6 +837,13 @@ class ActivePage(QWidget):
         text = f"{n} aktive{'s' if n == 1 else ''} Overlay{'' if n == 1 else 's'}  ·  Profil „{self.store.profile.name}“"
         self.subtitle.setText(text + (f"  ·  {hidden} NSFW ausgeblendet" if hidden else ""))
         self._refresh_rows()
+
+    def _update_tips(self) -> None:
+        b = f'<b style="color:{theme.TEXT}">'
+        self.tips.setText(
+            f'<span style="color:{theme.MUTED}">Im {b}Bearbeiten-Modus</b> kannst du Overlays ziehen, an den Ecken '
+            f'skalieren oder mit dem {b}Mausrad</b> zoomen. Rechtsklick öffnet mehr Optionen. Danach mit '
+            f'{b}{self.store.hotkey_text("edit")}</b> fixieren: Dann lassen sich die Overlays durchklicken.</span>')
 
     def _remove_all(self) -> None:
         n = len(self.manager.shown_states())
@@ -916,6 +937,78 @@ class StorageBar(QWidget):
             p.drawText(QRectF(x + 15, 28, 220, 24), Qt.AlignmentFlag.AlignVCenter, text)
             x += p.fontMetrics().horizontalAdvance(text) + 40
         p.end()
+
+
+class HotkeyControl(QWidget):
+    """Shows a hotkey; click it and press a new combination to change it."""
+
+    def __init__(self, store: Store, action: str) -> None:
+        super().__init__()
+        self.store, self.action = store, action
+        self.recording = False
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(6)
+        self.button = QPushButton()
+        self.button.setMinimumWidth(170)
+        self.button.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.button.setToolTip("Klicken und neue Tastenkombination drücken")
+        self.button.clicked.connect(self.start)
+        self.button.installEventFilter(self)
+        self.reset = IconButton(theme.Icon.REFRESH, "Auf Standard zurücksetzen", size=32)
+        self.reset.clicked.connect(lambda: self._apply(None))
+        lay.addWidget(self.button)
+        lay.addWidget(self.reset)
+        store.hotkeys_changed.connect(self.refresh)
+        self.refresh()
+
+    def refresh(self) -> None:
+        if self.recording:
+            return
+        self.button.setText(self.store.hotkey_text(self.action))
+        self.button.setStyleSheet("")
+        self.reset.setVisible(self.store.hotkey(self.action) != hotkeys.default(self.action))
+
+    def start(self) -> None:
+        if self.recording:
+            return
+        self.recording = True
+        self.window().unregister_hotkeys()   # otherwise the current combo never reaches us
+        self.button.setText("Tasten drücken …")
+        self.button.setStyleSheet(f"border-color:{theme.ACCENT}; color:{theme.TEXT};")
+        self.button.setFocus()
+        self.button.grabKeyboard()
+
+    def stop(self) -> None:
+        if not self.recording:
+            return
+        self.recording = False
+        self.button.releaseKeyboard()
+        self.refresh()
+
+    def _apply(self, combo: str | None) -> None:
+        self.stop()
+        self.window().change_hotkey(self.action, combo)
+        self.refresh()
+
+    def eventFilter(self, obj, event) -> bool:
+        if obj is self.button and self.recording:
+            if event.type() == QEvent.Type.KeyPress:
+                if event.key() == Qt.Key.Key_Escape:
+                    self.stop()
+                    self.window().register_hotkeys()
+                    return True
+                combo = hotkeys.from_key(event.key(), event.modifiers())
+                if combo:
+                    self._apply(combo)
+                else:
+                    held = [hotkeys.MOD_TEXT[m] for m in hotkeys.modifiers_text(event.modifiers())]
+                    self.button.setText(" + ".join(held + ["…"]) if held else "Tasten drücken …")
+                return True
+            if event.type() == QEvent.Type.FocusOut:
+                self.stop()
+                self.window().register_hotkeys()
+        return super().eventFilter(obj, event)
 
 
 CLOSE_MODES = {"auto": "Automatisch", "tray": "Immer in den Tray", "quit": "Immer beenden"}
@@ -1024,6 +1117,11 @@ class SettingsPage(QWidget):
         lay.addWidget(SettingRow(theme.Icon.MIN, "Beim Schließen des Fensters",
                                  "Automatisch: Solange Overlays auf dem Bildschirm sind, läuft Miso im Infobereich "
                                  "(Tray) weiter. Ohne Overlays wird Miso einfach beendet.", close_combo))
+        def set_animations(on: bool) -> None:
+            theme.ANIMATIONS = on and theme.system_animations_enabled()
+        lay.addWidget(SettingRow(theme.Icon.SPARKLE, "Animationen",
+                                 "Weiche Übergänge, Einblendungen und Bewegungen. Sind Animationen in Windows "
+                                 "ausgeschaltet, bleibt Miso ebenfalls ruhig.", toggle("animations", set_animations)))
         lay.addWidget(SettingRow(theme.Icon.SPARKLE, "Mit Windows starten",
                                  "Overlays sind direkt nach dem Hochfahren wieder da.",
                                  toggle("autostart", on_autostart)))
@@ -1031,15 +1129,41 @@ class SettingsPage(QWidget):
                                  "Beim Start nur die Overlays zeigen, nicht dieses Fenster.",
                                  toggle("start_hidden")))
 
+        section("Updates")
+        check_btn = QPushButton("Nach Updates suchen")
+        check_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        check_btn.clicked.connect(lambda: self.window().check_updates(manual=True))
+        lay.addWidget(SettingRow(theme.Icon.REFRESH, f"Miso {__version__}",
+                                 "Neue Versionen kommen direkt von GitHub. Das Setup wird vor der Installation "
+                                 "auf Vollständigkeit und Prüfsumme kontrolliert.", check_btn))
+        lay.addWidget(SettingRow(theme.Icon.GLOBE, "Automatisch nach Updates suchen",
+                                 "Beim Start und alle 12 Stunden. Du wirst gefragt, bevor etwas installiert wird.",
+                                 toggle("update_check")))
+        lay.addWidget(SettingRow(theme.Icon.DOWNLOAD, "Updates ohne Nachfrage installieren",
+                                 "Lädt neue Versionen automatisch und startet Miso danach neu "
+                                 "(nur bei installiertem Miso, nicht bei der portablen Version).",
+                                 toggle("update_auto_install")))
+
         section("Tastenkürzel")
-        for keys, title, text in (("Strg + Alt + E", "Bearbeiten-Modus", "Overlays verschieben oder fixieren (durchklickbar)."),
-                                  ("Strg + Alt + H", "Alle aus-/einblenden", "Blendet alle Overlays schnell aus und wieder ein."),
-                                  ("Strg + Alt + ← / →", "Profil wechseln", "Zum vorherigen oder nächsten Profil springen, auch wenn Miso im Tray ist."),
-                                  ("Strg + V", "Bild einfügen", "Kopiertes Bild, GIF oder Bild-Link direkt in die Bibliothek.")):
-            chip = QLabel(keys)
-            chip.setStyleSheet(f"background:{theme.SURFACE_3}; border:1px solid {theme.BORDER}; border-radius:8px;"
-                               f" padding:5px 10px; font-weight:600; font-family:'Cascadia Mono','Consolas';")
-            lay.addWidget(SettingRow(theme.Icon.KEYBOARD, title, text, chip))
+        hint = QLabel("Klick auf ein Kürzel und drück die neue Tastenkombination (mit Strg, Alt, Umschalt oder Win). "
+                      "Esc bricht ab. Die Kürzel funktionieren überall, auch wenn Miso im Tray ist.")
+        hint.setObjectName("Muted")
+        hint.setWordWrap(True)
+        lay.addWidget(hint)
+        descriptions = {
+            "edit": "Overlays verschieben oder fixieren (durchklickbar).",
+            "hide": "Blendet alle Overlays schnell aus und wieder ein.",
+            "prev": "Zum vorherigen Profil springen.",
+            "next": "Zum nächsten Profil springen.",
+        }
+        for action, text in descriptions.items():
+            lay.addWidget(SettingRow(theme.Icon.KEYBOARD, hotkeys.ACTIONS[action][1], text,
+                                     HotkeyControl(store, action)))
+        chip = QLabel("Strg + V")
+        chip.setStyleSheet(f"background:{theme.SURFACE_3}; border:1px solid {theme.BORDER}; border-radius:8px;"
+                           f" padding:5px 10px; font-weight:600;")
+        lay.addWidget(SettingRow(theme.Icon.KEYBOARD, "Bild einfügen",
+                                 "Kopiertes Bild, GIF oder Bild-Link direkt in die Bibliothek (im Miso-Fenster).", chip))
 
         section("Steam Workshop")
         info = QLabel("Direkt")

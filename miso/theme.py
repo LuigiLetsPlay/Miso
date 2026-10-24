@@ -27,6 +27,23 @@ DANGER = "#D9666F"
 
 ICON_FONT = "Segoe Fluent Icons"
 
+# -- motion --------------------------------------------------------------------------
+ANIMATIONS = True   # set from the user setting + Windows' "show animations" at startup
+
+
+def ms(duration: int) -> int:
+    """Animation length, or 0 when animations are switched off."""
+    return duration if ANIMATIONS else 0
+
+
+def system_animations_enabled() -> bool:
+    if sys.platform != "win32":
+        return True
+    import ctypes
+    enabled = ctypes.c_int(1)
+    ctypes.windll.user32.SystemParametersInfoW(0x1042, 0, ctypes.byref(enabled), 0)  # SPI_GETCLIENTAREAANIMATION
+    return bool(enabled.value)
+
 
 class Icon:
     SEARCH = ""
@@ -66,6 +83,9 @@ class Icon:
     BROOM = ""
     CLOCK = ""
     WARNING = ""
+    CHEVRON_LEFT = ""
+    CHEVRON_RIGHT = ""
+    MORE = ""
 
 
 def asset(name: str) -> Path:

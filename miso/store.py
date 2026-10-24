@@ -10,6 +10,7 @@ from pathlib import Path
 
 from PySide6.QtCore import QObject, QTimer, Signal
 
+from . import hotkeys
 from .nsfw import is_nsfw
 
 APP_NAME = "Miso"
@@ -85,9 +86,14 @@ class Settings:
     autostart: bool = False
     start_hidden: bool = False
     show_tips: bool = True
-    hide_nsfw: bool = False
+    hide_nsfw: bool = True         # on by default; turning it off is saved like any setting
     auto_delete_days: int = 0      # 0 = never
     library_sort: str = "recent"   # recent | added | name | size
+    hotkeys: dict = field(default_factory=dict)   # action -> combo; missing = default
+    animations: bool = True
+    update_check: bool = True      # look for new GitHub releases
+    update_auto_install: bool = False
+    update_dismissed: str = ""     # version the user said "later" to (no popup again)
 
 
 class Store(QObject):
@@ -95,6 +101,22 @@ class Store(QObject):
     overlays_changed = Signal()
     filter_changed = Signal()
     profiles_changed = Signal()   # added / renamed / removed / switched
+    hotkeys_changed = Signal()
+
+    def hotkey(self, action: str) -> str:
+        return self.settings.hotkeys.get(action) or hotkeys.default(action)
+
+    def hotkey_text(self, action: str) -> str:
+        return hotkeys.display(self.hotkey(action))
+
+    def set_hotkey(self, action: str, combo: str | None) -> None:
+        """Set a combo (None = back to default)."""
+        if combo and combo != hotkeys.default(action):
+            self.settings.hotkeys[action] = combo
+        else:
+            self.settings.hotkeys.pop(action, None)
+        self.save()
+        self.hotkeys_changed.emit()
 
     def hidden(self, title: str) -> bool:
         """True if the NSFW filter hides something with this title."""

@@ -40,14 +40,20 @@ The app itself is currently in German.
 - **Your own images**: upload files, drag images straight from your browser, or paste with
   `Ctrl + V`.
 - **Library**: favourites, search, filters, sorting by last used.
-- **Hide NSFW**: hides anything with 18+, NSFW etc. in the title everywhere, without
-  deleting it.
+- **Hide NSFW** (on by default): hides anything with 18+, NSFW etc. in the title everywhere,
+  without deleting it.
 - **Storage**: see what uses space, clear the cache, and auto-delete items you haven't used for
   X days. Miso always asks before deleting anything.
 - **Tray**: Miso keeps running in the tray while overlays are on screen (configurable).
+- **Auto-update**: Miso checks GitHub for new releases, verifies the download and updates itself
+  (asks first, or fully automatic if you like).
+- **Custom shortcuts**: change every global hotkey in the settings.
+- Smooth animations throughout (can be turned off; respects Windows' animation setting).
 - Overlays survive restarts, with optional autostart.
 
 ## Shortcuts
+
+Defaults; all global shortcuts can be changed in the settings.
 
 | Shortcut | Action |
 | --- | --- |

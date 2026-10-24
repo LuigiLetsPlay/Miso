@@ -2,7 +2,9 @@
 ; Installs per user (no admin prompt) into %LOCALAPPDATA%\Programs\Miso.
 
 #define AppName "Miso"
-#define AppVersion "1.1.0"
+#ifndef AppVersion
+  #define AppVersion "1.1.0"
+#endif
 #define AppExe "Miso.exe"
 
 [Setup]
@@ -53,6 +55,8 @@ Root: HKCU; Subkey: "Software\Microsoft\Windows\CurrentVersion\Run"; ValueType: 
 
 [Run]
 Filename: "{app}\{#AppExe}"; Description: "{cm:LaunchProgram,{#AppName}}"; Flags: nowait postinstall skipifsilent
+; after an in-app (silent) update, start the new version again
+Filename: "{app}\{#AppExe}"; Flags: nowait skipifnotsilent
 
 [Code]
 procedure CurUninstallStepChanged(CurUninstallStep: TUninstallStep);

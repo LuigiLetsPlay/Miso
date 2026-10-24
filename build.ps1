@@ -18,7 +18,8 @@ $iscc = @("$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe",
           "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe",
           "$env:ProgramFiles\Inno Setup 6\ISCC.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1
 if ($iscc) {
-    & $iscc /Q installer\miso.iss
+    $version = (.\.venv\Scripts\python.exe -c "import miso; print(miso.__version__)").Trim()
+    & $iscc /Q "/DAppVersion=$version" installer\miso.iss
     if ($LASTEXITCODE -ne 0) { throw "Inno Setup ist fehlgeschlagen" }
     Write-Host "Fertig: dist\Miso-Setup.exe"
 } else {
