@@ -1,0 +1,51 @@
+Miso — Proprietary License
+
+Copyright (c) 2026 LuigiLetsPlay. All rights reserved.
+
+1. Permission to use
+   You may download the official releases of Miso published at
+   https://github.com/LuigiLetsPlay/miso/releases and install and use them, free of
+   charge, for personal and non-commercial purposes.
+
+2. Restrictions
+   Unless you have prior written permission from the copyright holder, you may NOT:
+   a) copy, reproduce or republish the source code, in whole or in part;
+   b) modify, adapt, translate or create derivative works based on Miso or its
+      source code;
+   c) distribute, sublicense, rent, sell or otherwise make Miso available to third
+      parties, including re-uploading the releases elsewhere;
+   d) use Miso, its source code or its design to build a competing product;
+   e) remove or alter any copyright notices.
+
+3. Source code
+   The source code is published for transparency only. Being able to view it does
+   not grant any right to use, copy or modify it beyond section 1. Forking on GitHub
+   is permitted only to the extent required by the GitHub Terms of Service and does
+   not grant any additional rights.
+
+4. Third-party components
+   Miso includes third-party software (e.g. Qt for Python / PySide6, Pillow,
+   cryptography, websockets) that is licensed under its own terms. Those licenses
+   apply to those components and take precedence over this license where they
+   conflict; see THIRD_PARTY_NOTICES.md. Nothing in this license restricts any right
+   you have under those licenses, including replacing the bundled LGPL libraries.
+
+5. Content
+   Workshop items, images and animations shown or downloaded with Miso belong to
+   their respective creators. Miso is not affiliated with or endorsed by Valve
+   Corporation, Steam or AnimaEngine.
+
+6. No warranty
+   Miso is provided "as is", without warranty of any kind, express or implied. In no
+   event shall the copyright holder be liable for any claim, damages or other
+   liability arising from the use of Miso.
+
+7. Termination
+   Any violation of these terms automatically terminates your permission to use
+   Miso.
+
+---
+
+Kurzfassung (Deutsch, nicht rechtsverbindlich): Du darfst Miso aus den offiziellen
+Releases kostenlos privat nutzen. Kopieren, Verändern, Weitergeben oder Verkaufen
+des Programms oder des Quellcodes ist ohne schriftliche Erlaubnis nicht gestattet.
