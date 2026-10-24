@@ -9,8 +9,8 @@ from PySide6.QtGui import (QColor, QFontMetrics, QImage, QLinearGradient, QPaint
                            QPixmap)
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkDiskCache, QNetworkReply, QNetworkRequest
 from PySide6.QtWidgets import (QAbstractButton, QDialog, QFrame, QGraphicsDropShadowEffect,
-                               QGraphicsOpacityEffect, QHBoxLayout, QLabel, QPushButton, QVBoxLayout,
-                               QWidget)
+                               QGraphicsOpacityEffect, QHBoxLayout, QLabel, QLineEdit, QPushButton,
+                               QVBoxLayout, QWidget)
 
 from . import media, theme
 from .store import CACHE_DIR
@@ -545,7 +545,7 @@ class ConfirmDialog(QDialog):
     """Dark, frameless yes/no popup. Used before anything gets deleted."""
 
     def __init__(self, parent: QWidget, title: str, text: str, confirm: str = "Löschen",
-                 cancel: str = "Abbrechen", danger: bool = True) -> None:
+                 cancel: str = "Abbrechen", danger: bool = True, field: str | None = None) -> None:
         super().__init__(parent)
         # stays on top so it can't hide behind always-on-top overlays
         self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint
@@ -582,7 +582,15 @@ class ConfirmDialog(QDialog):
         body = QLabel(text)
         body.setWordWrap(True)
         body.setStyleSheet(f"color:{theme.MUTED}; background:transparent; line-height:140%;")
+        body.setVisible(bool(text))
         lay.addWidget(body)
+        self.edit: QLineEdit | None = None
+        if field is not None:
+            self.edit = QLineEdit(field)
+            self.edit.setStyleSheet("padding-left: 12px;")
+            self.edit.selectAll()
+            lay.addSpacing(4)
+            lay.addWidget(self.edit)
         lay.addSpacing(10)
 
         buttons = QHBoxLayout()
@@ -599,8 +607,13 @@ class ConfirmDialog(QDialog):
             b.setMinimumWidth(110)
             buttons.addWidget(b)
         lay.addLayout(buttons)
-        no.setDefault(True)   # Enter never deletes by accident
-        no.setFocus()
+        if self.edit is not None:
+            yes.setDefault(True)
+            self.edit.returnPressed.connect(self.accept)
+            self.edit.setFocus()
+        else:
+            no.setDefault(True)   # Enter never deletes by accident
+            no.setFocus()
         self.setFixedWidth(460)
 
     def showEvent(self, e) -> None:
@@ -613,6 +626,13 @@ class ConfirmDialog(QDialog):
     def ask(parent: QWidget, title: str, text: str, confirm: str = "Löschen", cancel: str = "Abbrechen",
             danger: bool = True) -> bool:
         return ConfirmDialog(parent, title, text, confirm, cancel, danger).exec() == QDialog.DialogCode.Accepted
+
+    @staticmethod
+    def ask_text(parent: QWidget, title: str, value: str = "", confirm: str = "Speichern", text: str = "") -> str | None:
+        dlg = ConfirmDialog(parent, title, text, confirm, danger=False, field=value)
+        if dlg.exec() == QDialog.DialogCode.Accepted and dlg.edit.text().strip():
+            return dlg.edit.text().strip()
+        return None
 
 
 # -- toasts ---------------------------------------------------------------------

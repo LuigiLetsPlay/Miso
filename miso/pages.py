@@ -564,11 +564,18 @@ class LibraryPage(QWidget):
             count = active.count(item.path)
             card.set_state("Platzieren", theme.Icon.PIN, badge=f"Aktiv{f' ×{count}' if count > 1 else ''}" if count else "")
 
+    def _rename(self, item: LibraryItem) -> None:
+        name = ConfirmDialog.ask_text(self.window(), "Bild umbenennen", item.title)
+        if name:
+            self.store.rename_item(item, name)
+
     def _menu(self, item: LibraryItem, pos: QPoint) -> None:
         menu = QMenu(self)
         menu.addAction("Auf dem Bildschirm platzieren", lambda: self.place_requested.emit(item))
         menu.addAction("Aus Favoriten entfernen" if item.favorite else "Favorisieren",
                        lambda: self.store.set_favorite(item, not item.favorite))
+        if item.kind != "workshop":
+            menu.addAction("Umbenennen …", lambda: self._rename(item))
         menu.addAction("Im Explorer zeigen", lambda: QDesktopServices.openUrl(
             QUrl.fromLocalFile(str(Path(item.path).parent))))
         if item.workshop_id:
@@ -674,6 +681,84 @@ class OverlayRow(QFrame):
         self.refresh()
 
 
+class ProfileBar(QWidget):
+    """Profile chips: click to switch, + to add, right-click / ⋯ to manage."""
+
+    def __init__(self, store: Store, manager) -> None:
+        super().__init__()
+        self.store, self.manager = store, manager
+        self.lay = QHBoxLayout(self)
+        self.lay.setContentsMargins(0, 0, 0, 0)
+        self.lay.setSpacing(8)
+        store.profiles_changed.connect(self.rebuild)
+        self.rebuild()
+
+    def rebuild(self) -> None:
+        while self.lay.count():
+            item = self.lay.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        label = QLabel("Profil")
+        label.setObjectName("Muted")
+        self.lay.addWidget(label)
+        self.lay.addSpacing(4)
+        for pr in self.store.profiles:
+            chip = QPushButton(pr.name)
+            chip.setObjectName("Chip")
+            chip.setCheckable(True)
+            chip.setChecked(pr.uid == self.store.active_uid)
+            chip.setCursor(Qt.CursorShape.PointingHandCursor)
+            chip.setToolTip(f"{len(pr.overlays)} Overlay{'' if len(pr.overlays) == 1 else 's'}  ·  Rechtsklick für Optionen")
+            chip.clicked.connect(lambda _=False, uid=pr.uid: self.manager.switch_profile(uid))
+            chip.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+            chip.customContextMenuRequested.connect(lambda pos, pr=pr, c=chip: self.menu(pr, c.mapToGlobal(pos)))
+            self.lay.addWidget(chip)
+        add = IconButton(theme.Icon.ADD, "Neues Profil", size=32)
+        add.clicked.connect(self.add_profile)
+        self.lay.addWidget(add)
+        self.lay.addStretch()
+        hint = QLabel("Strg + Alt + ← / → zum Wechseln")
+        hint.setObjectName("Dim")
+        self.lay.addWidget(hint)
+        more = IconButton("", "Profil verwalten", size=32)
+        more.clicked.connect(lambda: self.menu(self.store.profile, more.mapToGlobal(QPoint(0, more.height() + 4))))
+        self.lay.addWidget(more)
+
+    def add_profile(self) -> None:
+        name = ConfirmDialog.ask_text(self.window(), "Neues Profil", self.store.unique_name("Profil"), "Anlegen",
+                                      "Ein neues, leeres Profil. Die Bibliothek teilen sich alle Profile.")
+        if name:
+            pr = self.store.add_profile(name)
+            self.manager.switch_profile(pr.uid)
+
+    def menu(self, pr, pos: QPoint) -> None:
+        menu = QMenu(self)
+        if pr.uid != self.store.active_uid:
+            menu.addAction("Aktivieren", lambda: self.manager.switch_profile(pr.uid))
+        menu.addAction("Umbenennen …", lambda: self.rename(pr))
+        menu.addAction("Duplizieren", lambda: self.duplicate(pr))
+        menu.addSeparator()
+        delete = menu.addAction("Löschen …", lambda: self.delete(pr))
+        delete.setEnabled(len(self.store.profiles) > 1)
+        menu.exec(pos)
+
+    def rename(self, pr) -> None:
+        name = ConfirmDialog.ask_text(self.window(), "Profil umbenennen", pr.name)
+        if name:
+            self.store.rename_profile(pr, name)
+
+    def duplicate(self, pr) -> None:
+        copy = self.store.add_profile(f"{pr.name} Kopie", copy_from=pr)
+        self.manager.switch_profile(copy.uid)
+
+    def delete(self, pr) -> None:
+        n = len(pr.overlays)
+        if ConfirmDialog.ask(self.window(), f"Profil „{pr.name}“ löschen?",
+                             f"Die Anordnung mit {n} Overlay{'' if n == 1 else 's'} geht verloren. "
+                             "Die Bilder selbst bleiben in deiner Bibliothek.", "Profil löschen"):
+            self.manager.delete_profile(pr)
+
+
 class ActivePage(QWidget):
     def __init__(self, store: Store, loader: ImageLoader, manager) -> None:
         super().__init__()
@@ -695,6 +780,7 @@ class ActivePage(QWidget):
         top.addWidget(self.hide_btn, 0, Qt.AlignmentFlag.AlignBottom)
         top.addWidget(clear, 0, Qt.AlignmentFlag.AlignBottom)
         root.addLayout(top)
+        root.addWidget(ProfileBar(store, manager))
 
         tips = QLabel(
             f'<span style="color:{theme.MUTED}">Im <b style="color:{theme.TEXT}">Bearbeiten-Modus</b> kannst du Overlays '
@@ -715,6 +801,7 @@ class ActivePage(QWidget):
         self.rows: dict[str, OverlayRow] = {}
         store.overlays_changed.connect(self.rebuild)
         store.filter_changed.connect(self.rebuild)
+        store.profiles_changed.connect(self.rebuild)
         manager.changed.connect(self._refresh_rows)
         self.rebuild()
 
@@ -733,7 +820,7 @@ class ActivePage(QWidget):
         self.empty.setVisible(not shown)
         self.list.addStretch()
         n, hidden = len(shown), len(self.store.overlays) - len(shown)
-        text = f"{n} aktive{'s' if n == 1 else ''} Overlay{'' if n == 1 else 's'}"
+        text = f"{n} aktive{'s' if n == 1 else ''} Overlay{'' if n == 1 else 's'}  ·  Profil „{self.store.profile.name}“"
         self.subtitle.setText(text + (f"  ·  {hidden} NSFW ausgeblendet" if hidden else ""))
         self._refresh_rows()
 
@@ -947,6 +1034,7 @@ class SettingsPage(QWidget):
         section("Tastenkürzel")
         for keys, title, text in (("Strg + Alt + E", "Bearbeiten-Modus", "Overlays verschieben oder fixieren (durchklickbar)."),
                                   ("Strg + Alt + H", "Alle aus-/einblenden", "Blendet alle Overlays schnell aus und wieder ein."),
+                                  ("Strg + Alt + ← / →", "Profil wechseln", "Zum vorherigen oder nächsten Profil springen, auch wenn Miso im Tray ist."),
                                   ("Strg + V", "Bild einfügen", "Kopiertes Bild, GIF oder Bild-Link direkt in die Bibliothek.")):
             chip = QLabel(keys)
             chip.setStyleSheet(f"background:{theme.SURFACE_3}; border:1px solid {theme.BORDER}; border-radius:8px;"

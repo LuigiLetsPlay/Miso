@@ -5,80 +5,83 @@
 <h1 align="center">Miso</h1>
 
 <p align="center">
-  GIFs, APNGs, WebPs und Bilder als Overlay auf deinen Desktop legen, mit eingebautem
-  Steam Workshop für AnimaEngine.
+  Put animated GIFs, APNGs, WebPs and images on your Windows desktop as overlays,
+  with a built-in Steam Workshop browser.
 </p>
 
 <p align="center">
-  <a href="https://github.com/LuigiLetsPlay/miso/releases/latest"><b>⬇ Download (Windows)</b></a>
+  <a href="https://github.com/LuigiLetsPlay/Miso/releases/latest"><b>⬇ Download for Windows</b></a>
 </p>
 
 ---
 
 ## Installation
 
-1. Lade **`Miso-Setup.exe`** aus dem [neuesten Release](https://github.com/LuigiLetsPlay/miso/releases/latest) herunter.
-2. Ausführen. Admin-Rechte sind nicht nötig. Optional wird ein Desktop-Icon angelegt.
-3. Fertig. Miso findest du im Startmenü.
+1. Download **`Miso-Setup.exe`** from the [latest release](https://github.com/LuigiLetsPlay/Miso/releases/latest).
+2. Run it. No admin rights needed. A desktop shortcut is optional.
+3. Done. Miso is in your Start menu.
 
-Keine Lust auf Installation? Im Release gibt es auch **`Miso-portable.zip`**: entpacken und
-`Miso.exe` starten.
+Prefer no installer? Every release also has **`Miso-portable.zip`**: unzip it and run `Miso.exe`.
 
-> Windows SmartScreen kann beim ersten Start warnen, weil das Programm nicht signiert ist.
-> „Weitere Informationen“ → „Trotzdem ausführen“.
+> Windows SmartScreen may warn you because Miso isn't code-signed.
+> Click "More info" → "Run anyway".
+
+The app itself is currently in German.
 
 ## Features
 
-- **Overlays**: Transparent, immer im Vordergrund, animiert. Ziehen, an den Ecken skalieren,
-  Mausrad zum Zoomen, Rechtsklick für Deckkraft, Tempo und Spiegeln.
-- **Fixieren**: Mit `Strg + Alt + E` werden Overlays durchklickbar und stören nicht mehr.
-- **Steam Workshop**: AnimaEngine-Workshop durchsuchen und mit einem Klick herunterladen.
-  Kein Steam und kein SteamCMD nötig.
-- **Eigene Bilder**: Hochladen, Dateien reinziehen, Bilder direkt aus dem Browser ziehen oder
-  `Strg + V`.
-- **Bibliothek**: Favoriten, Suche, Filter und Sortierung nach zuletzt benutzt.
-- **NSFW ausblenden**: Blendet Inhalte mit 18+, NSFW usw. im Titel überall aus, ohne etwas
-  zu löschen.
-- **Speicher**: Übersicht über den Platzverbrauch, Cache leeren und ungenutzte Elemente
-  automatisch nach X Tagen löschen. Vor jedem Löschen wird nachgefragt.
-- **Tray**: Miso läuft im Hintergrund weiter, solange Overlays auf dem Bildschirm sind.
-  Das Verhalten ist einstellbar.
-- Overlays bleiben nach einem Neustart erhalten, optional mit Windows-Autostart.
+- **Overlays**: transparent, always on top, animated. Drag them, resize from the corners, zoom
+  with the mouse wheel, right-click for opacity, speed and mirroring.
+- **Lock mode**: `Ctrl + Alt + E` makes overlays click-through so they never get in your way.
+- **Profiles**: different overlay layouts (e.g. Gaming, Work, Stream). Switch with
+  `Ctrl + Alt + ← / →` from anywhere.
+- **Steam Workshop**: browse the AnimaEngine workshop and download with one click. No Steam
+  client or SteamCMD required.
+- **Your own images**: upload files, drag images straight from your browser, or paste with
+  `Ctrl + V`.
+- **Library**: favourites, search, filters, sorting by last used.
+- **Hide NSFW**: hides anything with 18+, NSFW etc. in the title everywhere, without
+  deleting it.
+- **Storage**: see what uses space, clear the cache, and auto-delete items you haven't used for
+  X days. Miso always asks before deleting anything.
+- **Tray**: Miso keeps running in the tray while overlays are on screen (configurable).
+- Overlays survive restarts, with optional autostart.
 
-## Tastenkürzel
+## Shortcuts
 
-| Kürzel | Aktion |
+| Shortcut | Action |
 | --- | --- |
-| `Strg + Alt + E` | Bearbeiten-Modus an/aus (fixiert = durchklickbar) |
-| `Strg + Alt + H` | Alle Overlays aus-/einblenden |
-| `Strg + V` | Bild, GIF oder Bild-Link in die Bibliothek einfügen |
+| `Ctrl + Alt + E` | Toggle edit mode (locked = click-through) |
+| `Ctrl + Alt + H` | Hide / show all overlays |
+| `Ctrl + Alt + ← / →` | Previous / next profile |
+| `Ctrl + V` | Paste an image, GIF or image link into the library |
 
-## Wie der Workshop-Download funktioniert
+## How the Workshop download works
 
-Miso macht dasselbe wie `steamcmd +login anonymous +workshop_download_item`, nur selbst
+Miso does what `steamcmd +login anonymous +workshop_download_item` does, natively
 (`miso/steam/`):
 
-1. Anonymer Login bei einem Steam-Server über WebSocket (Protobuf)
-2. Depot-Schlüssel und Manifest-Code für das Item anfordern
-3. Manifest und Datenblöcke vom Steam-CDN laden, mit AES entschlüsseln, mit LZMA/Zstd entpacken
-   und zusammensetzen
+1. Anonymous login to a Steam connection manager over WebSocket (protobuf)
+2. Request the depot key and manifest request code for the item
+3. Fetch the manifest and chunks from the Steam CDN, AES-decrypt, LZMA/Zstd-decompress and
+   reassemble the files
 
-## Daten
+## Data
 
-| Was | Wo |
+| What | Where |
 | --- | --- |
-| Einstellungen & Bibliothek | `%APPDATA%\Miso` |
-| Workshop-Downloads | `%LOCALAPPDATA%\Miso\workshop` |
-| Eigene Bilder | `%LOCALAPPDATA%\Miso\uploads` |
+| Settings, library, profiles | `%APPDATA%\Miso` |
+| Workshop downloads | `%LOCALAPPDATA%\Miso\workshop` |
+| Your uploads | `%LOCALAPPDATA%\Miso\uploads` |
 
-Beim Deinstallieren fragt Miso, ob diese Daten mitgelöscht werden sollen.
+The uninstaller asks whether this data should be removed as well.
 
-## Lizenz
+## License
 
-Copyright © 2026 LuigiLetsPlay. Alle Rechte vorbehalten.
-Miso darf aus den offiziellen Releases kostenlos privat genutzt werden. Kopieren, Verändern
-oder Weitergeben des Programms oder des Quellcodes ist nicht erlaubt. Details in
-[LICENSE](LICENSE). Mitgelieferte Bibliotheken: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
+Copyright © 2026 LuigiLetsPlay. All rights reserved.
+You may use the official releases free of charge for personal use. Copying, modifying or
+redistributing the program or its source code is not permitted. See [LICENSE](LICENSE).
+Bundled libraries: [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md).
 
-Miso steht in keiner Verbindung zu Valve, Steam oder AnimaEngine. Workshop-Inhalte gehören
-ihren jeweiligen Erstellern.
+Miso is not affiliated with or endorsed by Valve, Steam or AnimaEngine. Workshop content
+belongs to its respective creators.

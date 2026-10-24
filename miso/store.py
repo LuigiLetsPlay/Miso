@@ -72,6 +72,14 @@ class OverlayState:
 
 
 @dataclass
+class Profile:
+    """A named arrangement of overlays. The library is shared by all profiles."""
+    name: str
+    overlays: list[OverlayState] = field(default_factory=list)
+    uid: str = field(default_factory=lambda: uuid.uuid4().hex[:10])
+
+
+@dataclass
 class Settings:
     close_mode: str = "auto"       # auto (tray only while overlays are shown) | tray | quit
     autostart: bool = False
@@ -86,6 +94,7 @@ class Store(QObject):
     library_changed = Signal()
     overlays_changed = Signal()
     filter_changed = Signal()
+    profiles_changed = Signal()   # added / renamed / removed / switched
 
     def hidden(self, title: str) -> bool:
         """True if the NSFW filter hides something with this title."""
@@ -100,7 +109,8 @@ class Store(QObject):
         super().__init__()
         self.settings = Settings()
         self.library: list[LibraryItem] = []
-        self.overlays: list[OverlayState] = []
+        self.profiles: list[Profile] = [Profile("Standard")]
+        self.active_uid = self.profiles[0].uid
         self._timer = QTimer(self, singleShot=True, interval=400, timeout=self.save_now)
         self.load()
 
@@ -111,10 +121,19 @@ class Store(QObject):
             return
         self.settings = _load(Settings, data.get("settings", {}))
         self.library = [_load(LibraryItem, d) for d in data.get("library", [])]
-        self.overlays = [_load(OverlayState, d) for d in data.get("overlays", [])]
+        if data.get("profiles"):
+            self.profiles = [Profile(d.get("name") or "Profil",
+                                     [_load(OverlayState, o) for o in d.get("overlays", [])],
+                                     d.get("uid") or uuid.uuid4().hex[:10])
+                             for d in data["profiles"]]
+        else:  # configs from before profiles existed
+            self.profiles = [Profile("Standard", [_load(OverlayState, o) for o in data.get("overlays", [])])]
+        uids = [pr.uid for pr in self.profiles]
+        self.active_uid = data.get("active_profile") if data.get("active_profile") in uids else uids[0]
         # drop entries whose files were removed behind our back
         self.library = [i for i in self.library if Path(i.path).exists()]
-        self.overlays = [o for o in self.overlays if Path(o.path).exists()]
+        for pr in self.profiles:
+            pr.overlays = [o for o in pr.overlays if Path(o.path).exists()]
         active, now = {o.path for o in self.overlays}, time.time()
         for i in self.library:
             if i.path in active:  # on screen right now = in use
@@ -128,7 +147,8 @@ class Store(QObject):
         data = {
             "settings": asdict(self.settings),
             "library": [asdict(i) for i in self.library],
-            "overlays": [asdict(o) for o in self.overlays],
+            "profiles": [asdict(pr) for pr in self.profiles],
+            "active_profile": self.active_uid,
         }
         tmp = CONFIG_FILE.with_suffix(".tmp")
         tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), "utf-8")
@@ -161,17 +181,90 @@ class Store(QObject):
                 i.last_used = now
         self.save()
 
+    def rename_item(self, item: LibraryItem, title: str) -> None:
+        """Rename an uploaded image (workshop items keep their Steam title)."""
+        title = title.strip()
+        if not title or item.kind == "workshop" or title == item.title:
+            return
+        item.title = title
+        for pr in self.profiles:
+            for o in pr.overlays:
+                if o.path == item.path:
+                    o.title = title
+        self.save()
+        self.library_changed.emit()
+        self.overlays_changed.emit()
+
     def set_favorite(self, item: LibraryItem, on: bool) -> None:
         item.favorite = on
         self.save()
         self.library_changed.emit()
 
     def unused(self, days: int | None = None) -> list[LibraryItem]:
-        """Items that are not on screen and not favourites (optionally: unused for `days`)."""
-        active = {o.path for o in self.overlays}
+        """Items not used by any profile and not favourites (optionally: unused for `days`)."""
+        active = {o.path for pr in self.profiles for o in pr.overlays}
         cutoff = time.time() - days * 86400 if days else None
         return [i for i in self.library
                 if not i.favorite and i.path not in active and (cutoff is None or i.used < cutoff)]
+
+    # -- profiles -----------------------------------------------------------
+    @property
+    def profile(self) -> Profile:
+        return next((pr for pr in self.profiles if pr.uid == self.active_uid), self.profiles[0])
+
+    @property
+    def overlays(self) -> list[OverlayState]:
+        """Overlays of the active profile."""
+        return self.profile.overlays
+
+    def set_active(self, uid: str) -> None:
+        if uid != self.active_uid and any(pr.uid == uid for pr in self.profiles):
+            self.active_uid = uid
+            for o in self.overlays:
+                self.touch(o.path)
+            self.save()
+            self.profiles_changed.emit()
+            self.overlays_changed.emit()
+
+    def unique_name(self, base: str) -> str:
+        names = {pr.name for pr in self.profiles}
+        if base not in names:
+            return base
+        n = 2
+        while f"{base} {n}" in names:
+            n += 1
+        return f"{base} {n}"
+
+    def add_profile(self, name: str, copy_from: Profile | None = None) -> Profile:
+        overlays = []
+        if copy_from:
+            overlays = [OverlayState(**{**asdict(o), "uid": uuid.uuid4().hex[:10]}) for o in copy_from.overlays]
+        pr = Profile(self.unique_name(name.strip() or "Profil"), overlays)
+        self.profiles.append(pr)
+        self.save()
+        self.profiles_changed.emit()
+        return pr
+
+    def rename_profile(self, pr: Profile, name: str) -> None:
+        name = name.strip()
+        if name and name != pr.name:
+            pr.name = self.unique_name(name)
+            self.save()
+            self.profiles_changed.emit()
+
+    def remove_profile(self, pr: Profile) -> None:
+        """Remove a profile (never the last one). Switch away first if it is active."""
+        if len(self.profiles) > 1 and pr in self.profiles:
+            self.profiles.remove(pr)
+            self.save()
+            self.profiles_changed.emit()
+
+    def drop_path(self, path: str) -> None:
+        """Remove overlays showing `path` from every inactive profile."""
+        for pr in self.profiles:
+            if pr.uid != self.active_uid:
+                pr.overlays = [o for o in pr.overlays if o.path != path]
+        self.save()
 
     # -- overlays -----------------------------------------------------------
     def add_overlay(self, state: OverlayState) -> None:

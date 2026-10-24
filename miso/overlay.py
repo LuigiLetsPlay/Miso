@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import math
 
-from PySide6.QtCore import QPoint, QPointF, QRect, QRectF, QSize, Qt, QTimer, Signal
+from PySide6.QtCore import QPoint, QPointF, QPropertyAnimation, QRect, QRectF, QSize, Qt, QTimer, Signal
 from PySide6.QtGui import (QAction, QColor, QCursor, QGuiApplication, QPainter, QPainterPath, QPen,
                            QTransform)
 from PySide6.QtWidgets import QMenu, QWidget
@@ -389,3 +389,84 @@ class OverlayWindow(QWidget):
         if self._job:
             self._job.cancelled = True
         super().closeEvent(event)
+
+
+class ProfileOSD(QWidget):
+    """Small pill at the top of the screen that names the profile you switched to."""
+
+    W, H = 340, 92
+
+    def __init__(self) -> None:
+        super().__init__(None)
+        self.setWindowFlags(Qt.WindowType.FramelessWindowHint | Qt.WindowType.WindowStaysOnTopHint
+                            | Qt.WindowType.Tool | Qt.WindowType.NoDropShadowWindowHint
+                            | Qt.WindowType.WindowTransparentForInput)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
+        self.setAttribute(Qt.WidgetAttribute.WA_ShowWithoutActivating)
+        self.setFixedSize(self.W, self.H)
+        self.name, self.index, self.count, self.overlays = "", 0, 1, 0
+        self._hide = QTimer(self, singleShot=True, interval=1400, timeout=self._fade_out)
+        self._fade = QPropertyAnimation(self, b"windowOpacity", self)
+        self._fade.setDuration(180)
+        self._fade.finished.connect(lambda: self.hide() if self.windowOpacity() < 0.05 else None)
+
+    def announce(self, store) -> None:
+        self.name = store.profile.name
+        self.index = store.profiles.index(store.profile)
+        self.count = len(store.profiles)
+        self.overlays = len(store.overlays)
+        screen = QGuiApplication.screenAt(QCursor.pos()) or QGuiApplication.primaryScreen()
+        area = screen.availableGeometry()
+        self.move(area.center().x() - self.W // 2, area.top() + 36)
+        if not self.isVisible():
+            self.setWindowOpacity(0.0)
+            self.show()
+            winapi.set_click_through(int(self.winId()), True)
+        self.raise_()
+        self._fade.stop()
+        self._fade.setStartValue(self.windowOpacity())
+        self._fade.setEndValue(1.0)
+        self._fade.start()
+        self.update()
+        self._hide.start()
+
+    def _fade_out(self) -> None:
+        self._fade.stop()
+        self._fade.setStartValue(self.windowOpacity())
+        self._fade.setEndValue(0.0)
+        self._fade.start()
+
+    def paintEvent(self, event) -> None:
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = QRectF(self.rect()).adjusted(4, 4, -4, -4)
+        path = QPainterPath()
+        path.addRoundedRect(r, 20, 20)
+        p.fillPath(path, QColor(18, 18, 21, 236))
+        p.setPen(QPen(QColor(255, 255, 255, 34), 1))
+        p.drawPath(path)
+
+        p.setPen(QColor(theme.DIM))
+        p.setFont(theme.icon_font(10))
+        p.drawText(QRectF(r.left() + 14, r.top(), 24, 52), Qt.AlignmentFlag.AlignCenter, "\uE76B")   # chevron left
+        p.drawText(QRectF(r.right() - 38, r.top(), 24, 52), Qt.AlignmentFlag.AlignCenter, "\uE76C")  # chevron right
+
+        p.setPen(QColor(theme.TEXT))
+        p.setFont(theme.ui_font(13, theme.QFont.Weight.DemiBold, display=True))
+        fm = p.fontMetrics()
+        name = fm.elidedText(self.name, Qt.TextElideMode.ElideRight, int(r.width() - 90))
+        p.drawText(QRectF(r.left(), r.top() + 6, r.width(), 40), Qt.AlignmentFlag.AlignCenter, name)
+
+        p.setPen(QColor(theme.MUTED))
+        p.setFont(theme.ui_font(8.5))
+        sub = f"Profil {self.index + 1} von {self.count}  ·  {self.overlays} Overlay{'' if self.overlays == 1 else 's'}"
+        p.drawText(QRectF(r.left(), r.top() + 40, r.width(), 18), Qt.AlignmentFlag.AlignCenter, sub)
+
+        # position dots
+        n = min(self.count, 12)
+        x0 = r.center().x() - (n - 1) * 6
+        for i in range(n):
+            p.setPen(Qt.PenStyle.NoPen)
+            p.setBrush(QColor(theme.TEXT) if i == self.index else QColor(255, 255, 255, 50))
+            p.drawEllipse(QPointF(x0 + i * 12, r.bottom() - 12), 2.6, 2.6)
+        p.end()

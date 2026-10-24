@@ -189,6 +189,12 @@ QPushButton#Seg {{
 }}
 QPushButton#Seg:hover {{ color: {TEXT}; }}
 QPushButton#Seg:checked {{ background: {SURFACE_3}; color: {TEXT}; }}
+QPushButton#Chip {{
+    background: {SURFACE}; border: 1px solid {BORDER}; border-radius: 15px;
+    padding: 6px 14px; color: {MUTED}; font-weight: 600;
+}}
+QPushButton#Chip:hover {{ color: {TEXT}; border-color: {BORDER_HOVER}; }}
+QPushButton#Chip:checked {{ background: {ACCENT}; color: {ON_ACCENT}; border-color: {ACCENT}; }}
 QWidget#SegBar {{ background: {SURFACE}; border: 1px solid {BORDER}; border-radius: 10px; }}
 
 QComboBox {{

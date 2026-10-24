@@ -10,17 +10,19 @@ from PySide6.QtCore import QObject, QRectF, Qt, QTimer, Signal
 from PySide6.QtGui import QAction, QColor, QCursor, QGuiApplication, QKeySequence, QPainter, QPen, QShortcut
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 from PySide6.QtWidgets import (QAbstractButton, QAbstractSlider, QApplication, QHBoxLayout, QLabel,
-                               QLineEdit, QMenu, QStackedWidget, QSystemTrayIcon, QVBoxLayout, QWidget)
+                               QLineEdit, QMenu, QPushButton, QStackedWidget, QSystemTrayIcon, QVBoxLayout,
+                               QWidget)
 
 from . import importer, media, theme, winapi, workshop
-from .overlay import OverlayWindow
+from .overlay import OverlayWindow, ProfileOSD
 from .pages import ActivePage, LibraryPage, SettingsPage, WorkshopPage
 from .store import APP_NAME, DATA_DIR, UPLOAD_DIR, LibraryItem, OverlayState, Store
-from .widgets import (ConfirmDialog, ImageLoader, NavButton, TitleButton, ToastHost, ToggleSwitch,
-                      human_size)
+from .widgets import (ConfirmDialog, IconButton, ImageLoader, NavButton, TitleButton, ToastHost,
+                      ToggleSwitch, human_size)
 
 TITLEBAR_H = 44
-HOTKEY_EDIT, HOTKEY_HIDE = 1, 2
+HOTKEY_EDIT, HOTKEY_HIDE, HOTKEY_PREV, HOTKEY_NEXT = 1, 2, 3, 4
+VK_LEFT, VK_RIGHT = 0x25, 0x27
 # one instance per data folder
 SINGLETON = "Miso-" + hashlib.sha1(str(DATA_DIR).lower().encode()).hexdigest()[:10]
 
@@ -36,6 +38,7 @@ class OverlayManager(QObject):
         self.edit = False
         self.all_hidden = False
         self.windows: dict[str, OverlayWindow] = {}
+        self.osd = ProfileOSD()
         store.filter_changed.connect(self.apply_filter)
 
     def should_show(self, state: OverlayState) -> bool:
@@ -96,8 +99,36 @@ class OverlayManager(QObject):
         self.changed.emit()
 
     def remove_path(self, path: str) -> None:
+        """Remove `path` from the screen and from every profile."""
         for s in [s for s in self.store.overlays if s.path == path]:
             self.remove(s)
+        self.store.drop_path(path)
+
+    # -- profiles -------------------------------------------------------------
+    def switch_profile(self, uid: str, announce: bool = True) -> None:
+        if uid == self.store.active_uid:
+            if announce:
+                self.osd.announce(self.store)
+            return
+        self.close_all()
+        self.store.set_active(uid)
+        self.restore()
+        self.changed.emit()
+        if announce:
+            self.osd.announce(self.store)
+
+    def cycle_profile(self, step: int) -> None:
+        profiles = self.store.profiles
+        i = profiles.index(self.store.profile)
+        self.switch_profile(profiles[(i + step) % len(profiles)].uid)
+
+    def delete_profile(self, profile) -> None:
+        if len(self.store.profiles) < 2:
+            return
+        if profile is self.store.profile:
+            i = self.store.profiles.index(profile)
+            self.switch_profile(self.store.profiles[i - 1 if i else 1].uid, announce=False)
+        self.store.remove_profile(profile)
 
     def remove_all(self) -> None:
         for s in list(self.store.overlays):
@@ -199,6 +230,47 @@ class EditModeCard(QWidget):
         p.end()
 
 
+class ProfileSwitcher(QWidget):
+    """Sidebar card: current profile with ◀ ▶ to cycle; click the name to manage."""
+
+    def __init__(self, store: Store, manager: OverlayManager, on_open) -> None:
+        super().__init__()
+        self.store = store
+        self.setFixedHeight(62)
+        lay = QHBoxLayout(self)
+        lay.setContentsMargins(6, 6, 6, 6)
+        lay.setSpacing(2)
+        prev = IconButton("", "Vorheriges Profil (Strg + Alt + ←)", size=30)
+        nxt = IconButton("", "Nächstes Profil (Strg + Alt + →)", size=30)
+        prev.clicked.connect(lambda: manager.cycle_profile(-1))
+        nxt.clicked.connect(lambda: manager.cycle_profile(1))
+        self.name = QPushButton()
+        self.name.setObjectName("Ghost")
+        self.name.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.name.setToolTip("Profile verwalten")
+        self.name.clicked.connect(on_open)
+        lay.addWidget(prev)
+        lay.addWidget(self.name, 1)
+        lay.addWidget(nxt)
+        store.profiles_changed.connect(self.refresh)
+        self.refresh()
+
+    def refresh(self) -> None:
+        pr = self.store.profile
+        fm = self.name.fontMetrics()
+        self.name.setText(fm.elidedText(pr.name, Qt.TextElideMode.ElideRight, 120))
+        self.setToolTip(f"Profil {self.store.profiles.index(pr) + 1} von {len(self.store.profiles)}")
+
+    def paintEvent(self, e) -> None:
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing)
+        r = QRectF(self.rect()).adjusted(0.5, 0.5, -0.5, -0.5)
+        p.setBrush(QColor(theme.SURFACE))
+        p.setPen(QColor(theme.BORDER))
+        p.drawRoundedRect(r, 14, 14)
+        p.end()
+
+
 class DropHint(QWidget):
     """Full-window hint while something is dragged over Miso."""
 
@@ -290,6 +362,8 @@ class MainWindow(QWidget):
             sl.addWidget(b)
             self.nav.append(b)
         sl.addStretch()
+        sl.addWidget(ProfileSwitcher(store, manager, lambda: self.go(2)))
+        sl.addSpacing(6)
         sl.addWidget(EditModeCard(manager))
         root.addWidget(side)
 
@@ -349,6 +423,8 @@ class MainWindow(QWidget):
             winapi.user32.SetWindowPos(hwnd, 0, 0, 0, 0, 0, 0x0001 | 0x0002 | 0x0004 | 0x0020)  # FRAMECHANGED
             winapi.register_hotkey(hwnd, HOTKEY_EDIT, winapi.MOD_CONTROL | winapi.MOD_ALT, ord("E"))
             winapi.register_hotkey(hwnd, HOTKEY_HIDE, winapi.MOD_CONTROL | winapi.MOD_ALT, ord("H"))
+            self._profile_keys = (winapi.register_hotkey(hwnd, HOTKEY_PREV, winapi.MOD_CONTROL | winapi.MOD_ALT, VK_LEFT)
+                                  and winapi.register_hotkey(hwnd, HOTKEY_NEXT, winapi.MOD_CONTROL | winapi.MOD_ALT, VK_RIGHT))
 
     def nativeEvent(self, event_type, message):
         if event_type != b"windows_generic_MSG" and event_type != "windows_generic_MSG":
@@ -371,6 +447,10 @@ class MainWindow(QWidget):
                 self.manager.set_edit(not self.manager.edit)
             elif msg.wParam == HOTKEY_HIDE:
                 self.manager.set_all_hidden(not self.manager.all_hidden)
+            elif msg.wParam == HOTKEY_PREV:
+                self.manager.cycle_profile(-1)
+            elif msg.wParam == HOTKEY_NEXT:
+                self.manager.cycle_profile(1)
             return True, 0
         return super().nativeEvent(event_type, message)
 
@@ -584,6 +664,16 @@ def make_tray(app: QApplication, window: MainWindow, manager: OverlayManager) ->
     edit.toggled.connect(manager.set_edit)
     manager.edit_changed.connect(edit.setChecked)
     menu.addAction(edit)
+    profiles = menu.addMenu("Profil")
+
+    def fill_profiles() -> None:
+        profiles.clear()
+        for pr in manager.store.profiles:
+            a = QAction(pr.name, profiles, checkable=True)
+            a.setChecked(pr.uid == manager.store.active_uid)
+            a.triggered.connect(lambda _=False, uid=pr.uid: manager.switch_profile(uid))
+            profiles.addAction(a)
+    profiles.aboutToShow.connect(fill_profiles)
     hide = QAction("Overlays ausblenden", menu, checkable=True)
     hide.toggled.connect(manager.set_all_hidden)
     manager.changed.connect(lambda: hide.setChecked(manager.all_hidden))
@@ -652,7 +742,8 @@ def main() -> int:
         manager.close_all()
         if winapi.IS_WIN:
             winapi.unregister_hotkey(int(window.winId()), HOTKEY_EDIT)
-            winapi.unregister_hotkey(int(window.winId()), HOTKEY_HIDE)
+            for key in (HOTKEY_HIDE, HOTKEY_PREV, HOTKEY_NEXT):
+                winapi.unregister_hotkey(int(window.winId()), key)
         app.tray.hide()
     app.aboutToQuit.connect(shutdown)
     return app.exec()
