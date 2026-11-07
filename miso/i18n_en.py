@@ -325,4 +325,133 @@ EN: dict[str, str] = {
         "Pick something from your library to put it on screen.",
     "Blendet alles mit 18+, NSFW, hentai usw. im Titel aus: in der Bibliothek und auf dem Bildschirm. Gelöscht wird dabei nichts.":
         "Hides everything with 18+, NSFW, hentai etc. in the title: in the library and on screen. Nothing gets deleted.",
+
+    # --- discover / community ---------------------------------------------------------
+    "Entdecken": "Discover",
+    "Im Trend": "Trending",
+    "Beliebt": "Popular",
+    "Neu": "New",
+    "Neu laden": "Reload",
+    "Erneut versuchen": "Try again",
+    "Lädt mehr …": "Loading more …",
+    "Keine Treffer.": "No results.",
+    "Das war alles": "That's everything",
+    "Herunterladen": "Download",
+    "In Bibliothek": "In library",
+    "Download abbrechen": "Cancel download",
+    "Aus Bibliothek löschen": "Delete from library",
+    "„{a0}“ heruntergeladen. Klick drauf zum Platzieren": "“{a0}” downloaded. Click it to place it",
+    "Download fehlgeschlagen: {a0}": "Download failed: {a0}",
+    'Nicht mehr verfügbar.':
+        'No longer available.',
+    'Deine Uploads  ·  {a0}':
+        'Your uploads  ·  {a0}',
+    'Miso Community  ·  {a0} Bilder  ·  {a1}':
+        'Miso community  ·  {a0} images  ·  {a1}',
+    'Spam oder Werbung':
+        'Spam or advertising',
+    'Gib dem Bild einen kurzen Titel. Nach der Prüfung sieht es jeder unter „Entdecken“.':
+        "Give the image a short title. Once it's been reviewed, everyone can see it under “Discover”.",
+    'Bilder (*.gif *.png *.apng *.webp *.jpg *.jpeg)':
+        'Images (*.gif *.png *.apng *.webp *.jpg *.jpeg)',
+    'Hier ist noch nichts. Lade das erste Bild hoch!':
+        'Nothing here yet. Upload the first image!',
+    '„{a0}“ wird hochgeladen …':
+        'Uploading “{a0}” …',
+    'Etwas anderes':
+        'Something else',
+    'Wartet auf Freigabe':
+        'Waiting for review',
+    'Dieses Bild wurde schon hochgeladen.':
+        'This image has already been uploaded.',
+    'Bild zum Teilen auswählen':
+        'Choose an image to share',
+    'Das Bild wird vom Miso-Server gelöscht. Wer es schon heruntergeladen hat, behält es.':
+        'The image is deleted from the Miso server. Anyone who already downloaded it keeps their copy.',
+    '„{a0}“ melden':
+        'Report “{a0}”',
+    'Verstanden':
+        'Got it',
+    'Der Miso-Server ist gerade nicht erreichbar.':
+        "The Miso server can't be reached right now.",
+    'Was stimmt mit diesem Bild nicht? Die Meldung geht anonym an die Moderation.':
+        "What's wrong with this image? Your report goes to the moderators anonymously.",
+    'Hass, Gewalt oder Belästigung':
+        'Hate, violence or harassment',
+    'Das ist kein gültiges Bild (GIF, PNG, APNG, WebP oder JPG, höchstens 4096 Pixel).':
+        "That's not a valid image (GIF, PNG, APNG, WebP or JPG, at most 4096 pixels).",
+    'Du hast noch nichts hochgeladen. Teile ein Bild über „Hochladen“.':
+        "You haven't uploaded anything yet. Share an image with “Upload”.",
+    'Gerade warten sehr viele Bilder auf Prüfung. Bitte versuch es später nochmal.':
+        'Lots of images are waiting for review right now. Please try again later.',
+    'Die Datei ist kein Bild':
+        "The file isn't an image",
+    'Upload zurückziehen …':
+        'Withdraw upload …',
+    'Datei ist größer als erwartet':
+        'The file is bigger than expected',
+    'Zu viele Anfragen. Bitte versuch es später nochmal.':
+        'Too many requests. Please try again later.',
+    'Melden …':
+        'Report …',
+    '„{a0}“ hochgeladen. Es erscheint, sobald es geprüft wurde.':
+        "“{a0}” uploaded. It shows up once it's been reviewed.",
+    'Bevor du etwas teilst:\n\n• Lade nur Bilder hoch, die du selbst gemacht hast oder teilen darfst.\n• Nichts Anstößiges, keine Gewalt, keine echten Personen ohne deren Einverständnis.\n• Jedes Bild wird vor der Veröffentlichung geprüft und kann jederzeit entfernt werden.\n\nDatenschutz: Miso schickt das Bild, den Titel und eine zufällige ID dieser Installation an miso.luigilp.de. Deine IP-Adresse wird nur verschlüsselt (gehasht) gespeichert, um Missbrauch zu verhindern. Abgelehnte Bilder werden nach 30 Tagen gelöscht, eigene Uploads kannst du jederzeit zurückziehen.':
+        'Before you share something:\n\n• Only upload images you made yourself or are allowed to share.\n• Nothing offensive, no violence, no real people without their consent.\n• Every image is reviewed before it goes public and can be removed at any time.\n\nPrivacy: Miso sends the image, its title and a random ID of this installation to miso.luigilp.de. Your IP address is only stored hashed, to prevent abuse. Rejected images are deleted after 30 days, and you can withdraw your own uploads at any time.',
+    'Verletzt Urheberrechte':
+        'Infringes copyright',
+    'Melden fehlgeschlagen: {a0}':
+        'Report failed: {a0}',
+    '1 Download':
+        '1 download',
+    'Konnte nicht geladen werden.\n{a0}':
+        "Couldn't load.\n{a0}",
+    'Abgelehnt':
+        'Rejected',
+    'Hochladen':
+        'Upload',
+    'Details (optional)':
+        'Details (optional)',
+    'Die Datei ist zu groß (höchstens 15 MB).':
+        'The file is too big (15 MB at most).',
+    'Bilder mit der Community teilen':
+        'Share images with the community',
+    'Melden':
+        'Report',
+    'Zurückziehen':
+        'Withdraw',
+    'Nicht jugendfrei (NSFW)':
+        'Not safe for work (NSFW)',
+    'Veröffentlicht':
+        'Published',
+    'Auf Miso teilen':
+        'Share on Miso',
+    'Von diesem PC können keine Bilder mehr hochgeladen werden.':
+        'No more images can be uploaded from this PC.',
+    'Ich darf dieses Bild teilen und es ist nicht anstößig.':
+        "I'm allowed to share this image and it isn't offensive.",
+    'Hochladen fehlgeschlagen: {a0}':
+        'Upload failed: {a0}',
+    'Meine Uploads':
+        'My uploads',
+    'Danke! Die Meldung wurde gesendet.':
+        'Thanks! Your report was sent.',
+    '{a0} Downloads':
+        '{a0} downloads',
+    'Fehler vom Server ({a0})':
+        'Server error ({a0})',
+    'Durchsuchen …':
+        'Search …',
+    'Datei nicht gefunden':
+        'File not found',
+    '„{a0}“ zurückziehen?':
+        'Withdraw “{a0}”?',
+    'Der Titel muss 2 bis 60 Zeichen lang sein.':
+        'The title must be 2 to 60 characters long.',
+    '„{a0}“ zurückgezogen':
+        '“{a0}” withdrawn',
+    'Auf Miso teilen …':
+        'Share on Miso …',
+    'Miso durchsuchen …':
+        'Search Miso …',
 }

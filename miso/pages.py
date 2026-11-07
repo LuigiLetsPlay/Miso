@@ -345,6 +345,8 @@ class LibraryPage(QWidget):
     def _build_filters(self) -> None:
         for b in self.seg_group.buttons():
             self.seg_group.removeButton(b)
+            self.seg_lay.removeWidget(b)
+            b.hide()
             b.deleteLater()
         for key, label in self._filters().items():
             b = QPushButton(label)

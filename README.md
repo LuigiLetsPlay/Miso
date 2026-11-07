@@ -5,7 +5,8 @@
 <h1 align="center">Miso</h1>
 
 <p align="center">
-  Put animated GIFs, APNGs, WebPs and images on your Windows desktop as overlays.
+  Put animated GIFs, APNGs, WebPs and images on your Windows desktop as overlays,
+  and share them with the Miso community.
 </p>
 
 <p align="center">
@@ -34,6 +35,11 @@ Miso speaks German and English (switch in Settings → General → Language).
 - **Lock mode**: `Ctrl + Alt + E` makes overlays click-through so they never get in your way.
 - **Profiles**: different overlay layouts (e.g. Gaming, Work, Stream). Switch with
   `Ctrl + Alt + ← / →` from anywhere. Drag profiles and overlays to reorder them.
+- **Discover**: browse images other Miso users shared (trending, popular, new), download with one
+  click and see how often each was downloaded. Share your own with **Upload** or right-click →
+  *Share on Miso*. Every upload is reviewed before it goes public; anything inappropriate can be
+  reported with right-click → *Report*. Your own uploads (and their review status) are under
+  *My uploads*, where you can also withdraw them.
 - **Games**: overlays stay on top of games in borderless / fullscreen-windowed mode and keep their
   spot when a game changes the resolution. Miso never hooks into games (no anti-cheat risk).
 - **Your own images**: upload files, drag images straight from your browser, or paste with
@@ -68,8 +74,13 @@ Defaults; all global shortcuts can be changed in the settings.
 | --- | --- |
 | Settings, library, profiles | `%APPDATA%\Miso` |
 | Your uploads | `%LOCALAPPDATA%\Miso\uploads` |
+| Downloads from Discover | `%LOCALAPPDATA%\Miso\community` |
 
 The uninstaller asks whether this data should be removed as well.
+
+Sharing sends only the image, its title and a random ID of your Miso installation to
+`miso.luigilp.de` (no account, no name). Your IP address is stored only as a keyed hash to stop
+abuse; rejected images are deleted after 30 days.
 
 ## License
 

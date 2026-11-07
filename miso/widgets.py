@@ -676,6 +676,12 @@ class CardGrid(QWidget):
         card.show()
         self.cards.append(card)
 
+    def remove(self, card: QWidget) -> None:
+        if card in self.cards:
+            self.cards.remove(card)
+            card.deleteLater()
+            self.relayout()
+
     def relayout(self) -> None:
         width = max(1, self.width())
         cols = max(1, (width + self.GAP) // (self.MIN_W + self.GAP))
@@ -698,7 +704,8 @@ class ConfirmDialog(QDialog):
     """Dark, frameless yes/no popup. Used before anything gets deleted."""
 
     def __init__(self, parent: QWidget, title: str, text: str, confirm: str = tr("Löschen"),
-                 cancel: str = tr("Abbrechen"), danger: bool = True, field: str | None = None) -> None:
+                 cancel: str = tr("Abbrechen"), danger: bool = True, field: str | None = None,
+                 extra: list[QWidget] | None = None) -> None:
         super().__init__(parent)
         # stays on top so it can't hide behind always-on-top overlays
         self.setWindowFlags(Qt.WindowType.Dialog | Qt.WindowType.FramelessWindowHint
@@ -744,13 +751,15 @@ class ConfirmDialog(QDialog):
             self.edit.selectAll()
             lay.addSpacing(4)
             lay.addWidget(self.edit)
+        for w in extra or []:
+            lay.addWidget(w)
         lay.addSpacing(10)
 
         buttons = QHBoxLayout()
         buttons.addStretch()
         no = QPushButton(cancel)
         no.clicked.connect(self.reject)
-        yes = QPushButton(confirm)
+        yes = self.confirm_button = QPushButton(confirm)
         yes.setObjectName("DangerSolid" if danger else "Primary")
         yes.setStyleSheet("QPushButton#DangerSolid { background:#8E3B43; border:1px solid #A5464F; color:white; }"
                           "QPushButton#DangerSolid:hover { background:#A5464F; }")

@@ -17,7 +17,8 @@ from PySide6.QtWidgets import (QAbstractButton, QAbstractSlider, QApplication, Q
                                QLineEdit, QMenu, QPushButton, QSystemTrayIcon, QVBoxLayout,
                                QWidget)
 
-from . import __version__, addons, hotkeys, importer, media, theme, updater, winapi
+from . import __version__, addons, community, hotkeys, importer, media, theme, updater, winapi
+from .discover import DiscoverPage, DownloadManager
 from .overlay import OverlayWindow, ProfileOSD
 from .pages import ActivePage, LibraryPage, PackDialog, SettingsPage
 from .store import APP_NAME, DATA_DIR, LOCAL_DIR, LibraryItem, OverlayState, Store, owned
@@ -442,10 +443,17 @@ class MainWindow(QWidget):
         ml.addWidget(titlebar)
 
         self.stack = FadeStack()
+        self.downloads = DownloadManager(store)
+        self.downloads.finished.connect(
+            lambda _, item: self.toast(tr("„{a0}“ heruntergeladen. Klick drauf zum Platzieren", a0=item.title), "ok"))
+        self.discover_page = DiscoverPage(store, self.downloads, self.loader, self.toast)
+        self.discover_page.add_source(community.MisoSource(store))
         self.library_page = LibraryPage(store, self.loader, manager.active_paths)
+        self.library_page.add_extension(community.LibraryHooks(store))
         self.active_page = ActivePage(store, self.loader, manager)
         self.settings_page = SettingsPage(store, self.apply_autostart)
-        for page, glyph, label in ((self.library_page, theme.Icon.LIBRARY, tr("Bibliothek")),
+        for page, glyph, label in ((self.discover_page, theme.Icon.COMPASS, tr("Entdecken")),
+                                   (self.library_page, theme.Icon.LIBRARY, tr("Bibliothek")),
                                    (self.active_page, theme.Icon.LAYERS, tr("Overlays")),
                                    (self.settings_page, theme.Icon.SETTINGS, tr("Einstellungen"))):
             self.add_page(page, glyph, label)
@@ -453,13 +461,14 @@ class MainWindow(QWidget):
         root.addWidget(main, 1)
 
         self.library_page.place_requested.connect(self.place)
+        self.discover_page.place_requested.connect(self.place)
         self.drop_hint = DropHint(self)
         self.drop_hint.hide()
         manager.changed.connect(self._update_badge)
         store.overlays_changed.connect(self._update_badge)
         store.filter_changed.connect(self._update_badge)
         self._update_badge()
-        self.go(self.library_page)
+        self.go(self.library_page if store.library else self.discover_page)
 
     # -- native frame ---------------------------------------------------------
     def init_native(self) -> None:
@@ -1034,6 +1043,7 @@ def main() -> int:
     update_timer.start()
 
     def shutdown() -> None:
+        window.downloads.cancel_all()
         store.save_now()
         manager.close_all()
         if winapi.IS_WIN:

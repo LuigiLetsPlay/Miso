@@ -143,6 +143,8 @@ class Settings:
     update_check: bool = True      # look for new GitHub releases
     update_auto_install: bool = False
     update_dismissed: str = ""     # version the user said "later" to (no popup again)
+    client_token: str = ""         # random id of this install for the community server (made on first use)
+    community_terms: bool = False  # upload rules + privacy note were accepted
     extra: dict = field(default_factory=dict)   # settings of add-ons, kept as is
 
 
