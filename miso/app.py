@@ -599,7 +599,9 @@ class MainWindow(QWidget):
         items = list(self.nav.items())
         items.insert(index, (page, button))
         self.nav = dict(items)
-        QTimer.singleShot(0, self._sync_indicator)
+        button.show()                    # Qt would only show it later, without a geometry until then
+        self.sidebar_layout.activate()   # buttons below moved: lay out now so the pill lands right
+        self._sync_indicator()
         return button
 
     def remove_page(self, page: QWidget) -> None:
@@ -607,11 +609,17 @@ class MainWindow(QWidget):
         button = self.nav.pop(page, None)
         if button is None:
             return
+        # take the button out of the layout first, otherwise the pill would glide to where the
+        # target button sits *before* the others move up
+        self.sidebar_layout.removeWidget(button)
+        button.hide()
+        button.deleteLater()
+        self.sidebar_layout.activate()
         if self.stack.currentWidget() is page:
             self.go(self.library_page)
+        else:
+            self._sync_indicator()
         self.stack.removeWidget(page)
-        button.deleteLater()
-        QTimer.singleShot(0, self._sync_indicator)
 
     def go(self, page: QWidget) -> None:
         button = self.nav.get(page)
