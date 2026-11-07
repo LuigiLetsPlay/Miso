@@ -1,0 +1,13 @@
+# environments & caches
+.venv/
+__pycache__/
+*.pyc
+
+# build output
+build/
+dist/
+*.spec
+
+# generated from assets/icon.png by tools/make_icon.py
+assets/icon.ico
+assets/setup-small*.bmp

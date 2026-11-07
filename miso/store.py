@@ -1,0 +1,381 @@
+"""Persistent state: settings, library and placed overlays (JSON in %APPDATA%)."""
+from __future__ import annotations
+
+import json
+import os
+import time
+import uuid
+from dataclasses import asdict, dataclass, field, fields
+from pathlib import Path
+
+from PySide6.QtCore import QObject, QTimer, Signal
+
+from . import hotkeys
+from .nsfw import is_nsfw
+from .i18n import tr
+
+APP_NAME = "Miso"
+DATA_DIR = Path(os.environ.get("APPDATA", Path.home())) / APP_NAME
+LOCAL_DIR = Path(os.environ.get("LOCALAPPDATA", Path.home())) / APP_NAME   # files Miso owns
+CACHE_DIR = LOCAL_DIR / "cache"
+UPLOAD_DIR = LOCAL_DIR / "uploads"
+CONFIG_FILE = DATA_DIR / "config.json"
+
+
+def _gone(path: str) -> bool:
+    """The file was deleted. A missing file on a drive that isn't there right now
+    (USB stick, network share) is *not* gone: it comes back when the drive does."""
+    p = Path(path)
+    if p.exists():
+        return False
+    try:
+        return Path(p.anchor).exists() if p.anchor else True
+    except OSError:
+        return False
+
+
+def _load(cls, data: dict):
+    """Build a dataclass from JSON. Unknown keys go into `extra` (if the class has it), so
+    nothing written by another version or an add-on is lost on the next save."""
+    names = {f.name for f in fields(cls)}
+    obj = cls(**{k: v for k, v in data.items() if k in names})
+    if "extra" in names:
+        if not isinstance(obj.extra, dict):
+            obj.extra = {}
+        obj.extra.update({k: v for k, v in data.items() if k not in names})
+    return obj
+
+
+def owned(path: str | Path) -> bool:
+    """True for files inside Miso's own data folder (never the cache)."""
+    try:
+        p = Path(path).resolve()
+        return LOCAL_DIR.resolve() in p.parents and CACHE_DIR.resolve() not in p.parents
+    except OSError:
+        return False
+
+
+@dataclass
+class LibraryItem:
+    path: str
+    title: str
+    kind: str = "local"            # "local" (linked file) | "upload" (copied into Miso) | others
+    added: float = field(default_factory=time.time)
+    last_used: float = 0.0         # last time it was on screen (0 = never)
+    favorite: bool = False
+    hidden: bool = False           # hidden from the library view by the user (nothing deleted)
+    files: list = field(default_factory=list)   # all images of a pack (empty = single image)
+    extra: dict = field(default_factory=dict)   # metadata for add-ons, kept as is
+
+    @property
+    def is_pack(self) -> bool:
+        return len(self.files) > 1
+
+    @property
+    def all_paths(self) -> list[str]:
+        return self.files if self.files else [self.path]
+
+    @property
+    def key(self) -> str:
+        return f"file:{self.path}"
+
+    @property
+    def used(self) -> float:
+        return max(self.last_used, self.added)
+
+    @property
+    def deletable(self) -> bool:
+        """Only files Miso owns get deleted from disk; plain links are just forgotten."""
+        return self.kind != "local" and owned(self.path)
+
+    def size(self) -> int:
+        total = 0
+        for p in self.all_paths:
+            try:
+                total += os.path.getsize(p)
+            except OSError:
+                pass
+        return total
+
+
+@dataclass
+class OverlayState:
+    path: str
+    title: str
+    x: int = 0
+    y: int = 0
+    w: int = 300
+    h: int = 300
+    opacity: float = 1.0
+    speed: float = 1.0
+    flip: bool = False
+    visible: bool = True
+    uid: str = field(default_factory=lambda: uuid.uuid4().hex[:10])
+    # screen the overlay was placed on, and its size back then. When a game switches the
+    # resolution, x/y/w/h are scaled from this reference so the overlay keeps its spot.
+    screen: str = ""
+    sx: int = 0
+    sy: int = 0
+    sw: int = 0
+    sh: int = 0
+
+
+@dataclass
+class Profile:
+    """A named arrangement of overlays. The library is shared by all profiles."""
+    name: str
+    overlays: list[OverlayState] = field(default_factory=list)
+    uid: str = field(default_factory=lambda: uuid.uuid4().hex[:10])
+
+
+@dataclass
+class Settings:
+    close_mode: str = "auto"       # auto (tray only while overlays are shown) | tray | quit
+    autostart: bool = False
+    start_hidden: bool = False
+    show_tips: bool = True
+    hide_nsfw: bool = True         # on by default; turning it off is saved like any setting
+    auto_delete_days: int = 0      # 0 = never
+    library_sort: str = "recent"   # recent | added | name | size
+    language: str = ""             # "de" / "en"; empty = Windows language
+    hotkeys: dict = field(default_factory=dict)   # action -> combo; missing = default
+    animations: bool = True
+    update_check: bool = True      # look for new GitHub releases
+    update_auto_install: bool = False
+    update_dismissed: str = ""     # version the user said "later" to (no popup again)
+    extra: dict = field(default_factory=dict)   # settings of add-ons, kept as is
+
+
+class Store(QObject):
+    library_changed = Signal()
+    overlays_changed = Signal()
+    filter_changed = Signal()
+    profiles_changed = Signal()   # added / renamed / removed / switched
+    hotkeys_changed = Signal()
+
+    def hotkey(self, action: str) -> str:
+        return self.settings.hotkeys.get(action) or hotkeys.default(action)
+
+    def hotkey_text(self, action: str) -> str:
+        return hotkeys.display(self.hotkey(action))
+
+    def set_hotkey(self, action: str, combo: str | None) -> None:
+        """Set a combo (None = back to default)."""
+        if combo and combo != hotkeys.default(action):
+            self.settings.hotkeys[action] = combo
+        else:
+            self.settings.hotkeys.pop(action, None)
+        self.save()
+        self.hotkeys_changed.emit()
+
+    def hidden(self, title: str) -> bool:
+        """True if the NSFW filter hides something with this title."""
+        return self.settings.hide_nsfw and is_nsfw(title)
+
+    def set_hide_nsfw(self, on: bool) -> None:
+        self.settings.hide_nsfw = on
+        self.save()
+        self.filter_changed.emit()
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.settings = Settings()
+        self.library: list[LibraryItem] = []
+        self.profiles: list[Profile] = [Profile(tr("Standard"))]
+        self.active_uid = self.profiles[0].uid
+        self._timer = QTimer(self, singleShot=True, interval=400, timeout=self.save_now)
+        self.load()
+
+    def load(self) -> None:
+        try:
+            data = json.loads(CONFIG_FILE.read_text("utf-8"))
+        except (OSError, ValueError):
+            return
+        self.settings = _load(Settings, data.get("settings", {}))
+        self.library = [_load(LibraryItem, d) for d in data.get("library", [])]
+        if data.get("profiles"):
+            self.profiles = [Profile(d.get("name") or tr("Profil"),
+                                     [_load(OverlayState, o) for o in d.get("overlays", [])],
+                                     d.get("uid") or uuid.uuid4().hex[:10])
+                             for d in data["profiles"]]
+        else:  # configs from before profiles existed
+            self.profiles = [Profile(tr("Standard"), [_load(OverlayState, o) for o in data.get("overlays", [])])]
+        uids = [pr.uid for pr in self.profiles]
+        self.active_uid = data.get("active_profile") if data.get("active_profile") in uids else uids[0]
+        # drop entries whose files were removed behind our back
+        self.library = [i for i in self.library if not _gone(i.path)]
+        for pr in self.profiles:
+            pr.overlays = [o for o in pr.overlays if not _gone(o.path)]
+        active, now = {o.path for o in self.overlays}, time.time()
+        for i in self.library:
+            if i.path in active:  # on screen right now = in use
+                i.last_used = now
+
+    def save(self) -> None:
+        self._timer.start()
+
+    def save_now(self) -> None:
+        DATA_DIR.mkdir(parents=True, exist_ok=True)
+        data = {
+            "settings": asdict(self.settings),
+            "library": [asdict(i) for i in self.library],
+            "profiles": [asdict(pr) for pr in self.profiles],
+            "active_profile": self.active_uid,
+        }
+        tmp = CONFIG_FILE.with_suffix(".tmp")
+        tmp.write_text(json.dumps(data, indent=2, ensure_ascii=False), "utf-8")
+        tmp.replace(CONFIG_FILE)
+
+    # -- library ------------------------------------------------------------
+    def add_library(self, item: LibraryItem) -> LibraryItem:
+        existing = next((i for i in self.library if i.key == item.key), None)
+        if existing:
+            self.library.remove(existing)
+        self.library.insert(0, item)
+        self.save()
+        self.library_changed.emit()
+        return item
+
+    def remove_library(self, item: LibraryItem) -> None:
+        if item in self.library:
+            self.library.remove(item)
+            self.save()
+            self.library_changed.emit()
+
+    def touch(self, path: str) -> None:
+        """Mark library entries for `path` as used right now."""
+        now = time.time()
+        for i in self.library:
+            if path in i.all_paths:
+                i.last_used = now
+        self.save()
+
+    def rename_item(self, item: LibraryItem, title: str) -> None:
+        """Rename a library item (and the overlays showing it)."""
+        title = title.strip()
+        if not title or title == item.title:
+            return
+        item.title = title
+        for pr in self.profiles:
+            for o in pr.overlays:
+                if o.path == item.path:
+                    o.title = title
+        self.save()
+        self.library_changed.emit()
+        self.overlays_changed.emit()
+
+    def set_hidden(self, item: LibraryItem, on: bool) -> None:
+        item.hidden = on
+        self.save()
+        self.library_changed.emit()
+
+    def set_favorite(self, item: LibraryItem, on: bool) -> None:
+        item.favorite = on
+        self.save()
+        self.library_changed.emit()
+
+    def unused(self, days: int | None = None) -> list[LibraryItem]:
+        """Items not used by any profile and not favourites (optionally: unused for `days`)."""
+        active = {o.path for pr in self.profiles for o in pr.overlays}
+        cutoff = time.time() - days * 86400 if days else None
+        return [i for i in self.library
+                if not i.favorite and not active.intersection(i.all_paths) and (cutoff is None or i.used < cutoff)]
+
+    # -- profiles -----------------------------------------------------------
+    @property
+    def profile(self) -> Profile:
+        return next((pr for pr in self.profiles if pr.uid == self.active_uid), self.profiles[0])
+
+    @property
+    def overlays(self) -> list[OverlayState]:
+        """Overlays of the active profile."""
+        return self.profile.overlays
+
+    def set_active(self, uid: str) -> None:
+        if uid != self.active_uid and any(pr.uid == uid for pr in self.profiles):
+            self.active_uid = uid
+            for o in self.overlays:
+                self.touch(o.path)
+            self.save()
+            self.profiles_changed.emit()
+            self.overlays_changed.emit()
+
+    def unique_name(self, base: str) -> str:
+        names = {pr.name for pr in self.profiles}
+        if base not in names:
+            return base
+        n = 2
+        while f"{base} {n}" in names:
+            n += 1
+        return f"{base} {n}"
+
+    def add_profile(self, name: str, copy_from: Profile | None = None) -> Profile:
+        overlays = []
+        if copy_from:
+            overlays = [OverlayState(**{**asdict(o), "uid": uuid.uuid4().hex[:10]}) for o in copy_from.overlays]
+        pr = Profile(self.unique_name(name.strip() or tr("Profil")), overlays)
+        self.profiles.append(pr)
+        self.save()
+        self.profiles_changed.emit()
+        return pr
+
+    def rename_profile(self, pr: Profile, name: str) -> None:
+        name = name.strip()
+        if name and name != pr.name:
+            pr.name = self.unique_name(name)
+            self.save()
+            self.profiles_changed.emit()
+
+    def remove_profile(self, pr: Profile) -> None:
+        """Remove a profile (never the last one). Switch away first if it is active."""
+        if len(self.profiles) > 1 and pr in self.profiles:
+            self.profiles.remove(pr)
+            self.save()
+            self.profiles_changed.emit()
+
+    def move_profile(self, uid: str, index: int) -> None:
+        pr = next((p for p in self.profiles if p.uid == uid), None)
+        if pr is None:
+            return
+        old = self.profiles.index(pr)
+        self.profiles.remove(pr)
+        index = max(0, min(index - (1 if index > old else 0), len(self.profiles)))
+        self.profiles.insert(index, pr)
+        if index != old:
+            self.save()
+            self.profiles_changed.emit()
+
+    def move_overlay(self, uid: str, index: int) -> None:
+        """Reorder an overlay within the active profile's list."""
+        overlays = self.overlays
+        state = next((o for o in overlays if o.uid == uid), None)
+        if state is None:
+            return
+        old = overlays.index(state)
+        overlays.remove(state)
+        index = max(0, min(index - (1 if index > old else 0), len(overlays)))
+        overlays.insert(index, state)
+        if index != old:
+            self.save()
+            self.overlays_changed.emit()
+
+    def drop_path(self, path: str) -> None:
+        """Remove overlays showing `path` from every inactive profile."""
+        for pr in self.profiles:
+            if pr.uid != self.active_uid:
+                pr.overlays = [o for o in pr.overlays if o.path != path]
+        self.save()
+
+    # -- overlays -----------------------------------------------------------
+    def add_overlay(self, state: OverlayState) -> None:
+        self.touch(state.path)
+        self.overlays.append(state)
+        self.save()
+        self.overlays_changed.emit()
+
+    def remove_overlay(self, state: OverlayState) -> None:
+        if state in self.overlays:
+            self.touch(state.path)  # it was in use until now
+            self.overlays.remove(state)
+            self.save()
+            self.overlays_changed.emit()
